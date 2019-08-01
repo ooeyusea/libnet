@@ -179,7 +179,8 @@ namespace libnet {
 		if ((remote.sin_addr.s_addr = inet_addr(ip)) == INADDR_NONE)
 			return false;
 
-		BOOL res = g_connect(sock, (sockaddr *)&remote, sizeof(sockaddr_in), nullptr, 0, nullptr, (LPOVERLAPPED)&connector->connect);
+		DWORD len;
+		BOOL res = g_connect(sock, (sockaddr *)&remote, sizeof(sockaddr_in), nullptr, 0, &len, (LPOVERLAPPED)&connector->connect);
 		int32_t errCode = WSAGetLastError();
 		if (!res && errCode != WSA_IO_PENDING)
 			return false;
@@ -417,7 +418,7 @@ namespace libnet {
 		if (nullptr == evt)
 			return nullptr;
 
-		evt->code = WSAGetLastError();
+		evt->code = GetLastError();
 		evt->bytes = bytes;
 		if (!ret) {
 			if (WAIT_TIMEOUT == evt->code)
@@ -464,12 +465,13 @@ namespace libnet {
 	void NetEngine::OnConnect(ITcpSession* session, SOCKET sock, int32_t sendSize, int32_t recvSize) {
 		sockaddr_in remote;
 		int32_t size = sizeof(sockaddr_in);
-		if (0 != getpeername(sock, (sockaddr*)&remote, &size)) {
-			session->OnConnectFailed();
-
-			closesocket(sock);
-			return;
-		}
+		//if (0 != getpeername(sock, (sockaddr*)&remote, &size)) {
+		//	printf("WSAGetLastError %d", WSAGetLastError());
+		//	session->OnConnectFailed();
+		//
+		//	closesocket(sock);
+		//	return;
+		//}
 
 		Connection* connection = new Connection(sock, this, sendSize, recvSize);
 		connection->Attach(session);

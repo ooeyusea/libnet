@@ -40,7 +40,7 @@ namespace libnet {
 
 		template <typename T>
 		inline bool Read(int32_t offset, T& t) const {
-			if (offset + sizeof(T) > _size + _sizePlus)
+			if (offset + (int32_t)sizeof(T) > _size + _sizePlus)
 				return false;
 
 			if (offset >= _size) {
@@ -73,7 +73,7 @@ namespace libnet {
 
 				memcpy(_buffPlus + (offset - _size), &t, sizeof(T));
 			}
-			else if (_offset + sizeof(T) > _size) {
+			else if (_offset + (int32_t)sizeof(T) > _size) {
 				if (!_buffPlus)
 					return false;
 
