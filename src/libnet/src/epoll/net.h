@@ -9,34 +9,18 @@
 
 namespace libnet {
 	enum {
-		IOCP_OPT_CONNECT = 0,
-		IOCP_OPT_ACCEPT,
-		IOCP_OPT_RECV,
-		IOCP_OPT_SEND,
+		EPOLL_OPT_CONNECT = 0,
+		EPOLL_OPT_ACCEPT,
+		EPOLL_OPT_IO,
 	};
 
-	struct IocpEvent {
-		OVERLAPPED ol;
+	struct EpollBase {
 		int8_t opt;
 		int32_t code;
-		WSABUF buf;
-		DWORD bytes;
-		SOCKET sock;
-		void * context;
-	};
-
-	struct IocpConnector {
-		IocpEvent connect;
+		int32_t sock;
+		void* context;
 		int32_t sendSize;
 		int32_t recvSize;
-	};
-
-	struct IocpAcceptor {
-		IocpEvent accept;
-		int32_t sendSize;
-		int32_t recvSize;
-		SOCKET sock;
-		char buf[128];
 	};
 
 	enum NetEventType {
@@ -52,7 +36,7 @@ namespace libnet {
 	struct NetEvent {
 		int8_t evtType;
 		void * context;
-		SOCKET sock;
+		int32_t sock;
 		int32_t sendSize;
 		int32_t recvSize;
 
@@ -62,7 +46,7 @@ namespace libnet {
 	class Connection;
 	class NetEngine : public INetEngine {
 	public:
-		NetEngine(HANDLE completionPort);
+		NetEngine();
 		~NetEngine();
 
 		virtual bool Listen(ITcpServer* server, const char* ip, const int32_t port, const int32_t sendSize, const int32_t recvSize);
@@ -78,7 +62,7 @@ namespace libnet {
 		bool DoRecv(Connection* connection);
 		bool DoAccept(IocpAcceptor * evt);
 
-		IocpEvent * GetQueueState(HANDLE completionPort);
+		EpollBase* GetQueueState(int32_t fd);
 		void DealAccept(IocpAcceptor * evt);
 		void DealConnect(IocpConnector * evt);
 		void DealSend(IocpEvent * evt);
@@ -129,11 +113,11 @@ namespace libnet {
 	private:
 		bool _terminate;
 
-		HANDLE _completionPort;
+		int32_t _fd;
 		AtomicIntrusiveLinkedList<NetEvent, &NetEvent::next> _eventQueue;
 
 		std::unordered_set<Connection*> _connections;
-		std::unordered_map<ITcpServer*, SOCKET> _servers;
+		std::unordered_map<ITcpServer*, int32_t> _servers;
 	};
 }
 

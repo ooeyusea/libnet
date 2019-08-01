@@ -95,13 +95,6 @@ namespace libnet {
 		int32_t _sizePlus = 0;
 	};
 
-	struct IPreSendContext {
-		virtual ~IPreSendContext() {}
-
-		virtual void Commit() = 0;
-		virtual NetBuffer GetBuffer() = 0;
-	};
-
 	class IPipe {
 	public:
 		virtual ~IPipe() {}
@@ -109,7 +102,6 @@ namespace libnet {
 		virtual void Send(const char* context, const int32_t size) = 0;
 		virtual void Close() = 0;
 		virtual void Shutdown() = 0;
-		virtual IPreSendContext* PreAllocContext(int32_t size) = 0;
 
 		inline const char* GetRemoteIp() const { return _remoteIp; }
 		inline int32_t GetRemotePort() { return _remotePort; }
@@ -150,13 +142,6 @@ namespace libnet {
 				_pipe->Shutdown();
 		}
 
-		inline IPreSendContext* PreAllocContext(int32_t size) {
-			if (_pipe)
-				return _pipe->PreAllocContext(size);
-
-			return nullptr;
-		}
-
 	protected:
 		IPipe* _pipe = nullptr;
 	};
@@ -173,9 +158,9 @@ namespace libnet {
 	struct INetEngine {
 		virtual ~INetEngine() {}
 
-		virtual bool Listen(ITcpServer* server, const char* ip, const int32_t port, const int32_t sendSize, const int32_t recvSize) = 0;
+		virtual bool Listen(ITcpServer* server, const char* ip, const int32_t port, const int32_t sendSize, const int32_t recvSize, bool fast) = 0;
 		virtual void Stop(ITcpServer* server) = 0;
-		virtual bool Connect(ITcpSession* session, const char* ip, const int32_t port, const int32_t sendSize, const int32_t recvSize) = 0;
+		virtual bool Connect(ITcpSession* session, const char* ip, const int32_t port, const int32_t sendSize, const int32_t recvSize, bool fast) = 0;
 
 		virtual void Poll(int64_t frame) = 0;
 		virtual void Release() = 0;

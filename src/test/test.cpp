@@ -73,7 +73,7 @@ public:
 					Close();
 				}
 				else if (data == "test\n") {
-					g_engine->Connect(new TestConnectSession, "127.0.0.1", 5500, 1024, 1024);
+					g_engine->Connect(new TestConnectSession, "127.0.0.1", 5500, 1024, 1024, true);
 				}
 				else {
 					printf("recv %s\n", data.c_str());
@@ -112,7 +112,11 @@ int main(int argc, char** argv) {
 		return -1;
 	}
 
-	g_engine->Listen(new TestServer, "0.0.0.0", 5500, 1024, 1024);
+	if (strcmp(argv[1], "server") == 0)
+		g_engine->Listen(new TestServer, "0.0.0.0", 5500, 1024, 1024, true);
+	else
+		g_engine->Connect(new TestConnectSession, "127.0.0.1", 5500, 1024, 1024, true);
+
 	while (!g_terminate) {
 		g_engine->Poll(1);
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));

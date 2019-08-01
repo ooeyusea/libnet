@@ -1,6 +1,4 @@
 #include "net.h"
-#include <mswsock.h> 
-#include <ws2tcpip.h>
 #include "util.h"
 #include <thread>
 #include <atomic>
@@ -10,53 +8,8 @@
 #define MAX_NET_THREAD 4
 #define BACKLOG 128
 
-LPFN_ACCEPTEX GetAcceptExFunc() {
-	GUID acceptExGuild = WSAID_ACCEPTEX;
-	DWORD bytes = 0;
-	SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	LPFN_ACCEPTEX acceptFunc = nullptr;
-
-	WSAIoctl(sock,
-		SIO_GET_EXTENSION_FUNCTION_POINTER,
-		&acceptExGuild,
-		sizeof(acceptExGuild),
-		&acceptFunc,
-		sizeof(acceptFunc),
-		&bytes, nullptr, nullptr);
-
-	if (nullptr == acceptFunc) {
-		LIBNET_ASSERT(false, "Get AcceptEx fun error, error code : %d", WSAGetLastError());
-	}
-
-	return acceptFunc;
-}
-
-LPFN_CONNECTEX GetConnectExFunc() {
-	GUID conectExFunc = WSAID_CONNECTEX;
-	DWORD bytes = 0;
-	SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	LPFN_CONNECTEX connectFunc = nullptr;
-
-	WSAIoctl(sock,
-		SIO_GET_EXTENSION_FUNCTION_POINTER,
-		&conectExFunc,
-		sizeof(conectExFunc),
-		&connectFunc,
-		sizeof(connectFunc),
-		&bytes, nullptr, nullptr);
-
-	if (nullptr == connectFunc) {
-		LIBNET_ASSERT(false, "Get ConnectEx fun error, error code : %d", WSAGetLastError());
-	}
-
-	return connectFunc;
-}
-
-LPFN_ACCEPTEX g_accept = nullptr;
-LPFN_CONNECTEX g_connect = nullptr;
-
 namespace libnet {
-	NetEngine::NetEngine(HANDLE completionPort) : _completionPort(completionPort) {
+	NetEngine::NetEngine() {
 		int32_t cpuCount = (int32_t)std::thread::hardware_concurrency();
 		for (int32_t i = 0; i < MAX_NET_THREAD && i < cpuCount * 2; ++i) {
 			std::thread([this]() {
@@ -68,17 +21,24 @@ namespace libnet {
 	}
 
 	NetEngine::~NetEngine() {
-		CloseHandle(_completionPort);
-		WSACleanup();
-
 		_terminate = true;
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
 	}
 
 	bool NetEngine::Listen(ITcpServer* server, const char * ip, const int32_t port, const int32_t sendSize, const int32_t recvSize) {
-		SOCKET sock = INVALID_SOCKET;
-		if (INVALID_SOCKET == (sock = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED))) {
+		int32_t sock = -1;
+		if (-1 == (sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0))) {
+			return false;
+		}
+
+		if (fcntl(sock, F_SETFL, fcntl(sock, F_GETFD, 0) | O_NONBLOCK) == -1) {
+			close(sock);
+			return false;
+		}
+
+		int32_t flag = 1;
+		if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&flag, sizeof(flag)) == -1) {
+			close(sock);
 			return false;
 		}
 
@@ -86,42 +46,34 @@ namespace libnet {
 		addr.sin_family = AF_INET;
 		addr.sin_port = htons(port);
 		if ((addr.sin_addr.s_addr = inet_addr(ip)) == INADDR_NONE) {
-			closesocket(sock);
+			close(sock);
 			return false;
 		}
 
-		if (SOCKET_ERROR == bind(sock, (sockaddr*)&addr, sizeof(sockaddr_in))) {
-			closesocket(sock);
+		if (-1 == bind(sock, (sockaddr*)&addr, sizeof(sockaddr_in))) {
+			close(sock);
 			return false;
 		}
 
-		if (listen(sock, 128) == SOCKET_ERROR) {
-			closesocket(sock);
+		if (listen(sock, 128) == -1) {
+			close(sock);
 			return false;
 		}
 
-		if (_completionPort != CreateIoCompletionPort((HANDLE)sock, _completionPort, sock, 0)) {
-			closesocket(sock);
+		EpollBase * acceptor = new EpollBase;
+		memset(acceptor, 0, sizeof(EpollBase));
+		acceptor->opt = EPOLL_OPT_ACCEPT;
+		acceptor->sock = sock;
+		acceptor->code = 0;
+		acceptor->context = server;
+		acceptor->sendSize = sendSize;
+		acceptor->recvSize = recvSize;
+
+		if (!AddToWorker(acceptor)) {
+			close(sock);
+			delete acceptor;
+
 			return false;
-		}
-
-		for (int32_t i = 0; i < BACKLOG; ++i) {
-			IocpAcceptor * acceptor = new IocpAcceptor;
-
-			memset(&acceptor->accept, 0, sizeof(acceptor->accept));
-			acceptor->accept.opt = IOCP_OPT_ACCEPT;
-			acceptor->accept.sock = sock;
-			acceptor->accept.code = 0;
-			acceptor->accept.context = server;
-			acceptor->sendSize = sendSize;
-			acceptor->recvSize = recvSize;
-
-			if (!DoAccept(acceptor)) {
-				closesocket(sock);
-				delete acceptor;
-
-				return false;
-			}
 		}
 
 		_servers[server] = sock;
@@ -131,58 +83,52 @@ namespace libnet {
 	void NetEngine::Stop(ITcpServer* server) {
 		auto itr = _servers.find(server);
 		if (itr != _servers.end()) {
-			closesocket(itr->second);
+			close(itr->second);
 			
 			_servers.erase(itr);
 		}
 	}
 
 	bool NetEngine::Connect(ITcpSession* session, const char * ip, const int32_t port, const int32_t sendSize, const int32_t recvSize) {
-		IocpConnector * connector = new IocpConnector;
-
-		SOCKET sock = INVALID_SOCKET;
-		if (INVALID_SOCKET == (sock = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED))) {
-			LIBNET_ASSERT(false, "Connect error %d", ::WSAGetLastError());
+		int32_t sock = -1;
+		if (-1 == (sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0))) {
 			return false;
 		}
 
-		DWORD value = 0;
-		if (SOCKET_ERROR == ioctlsocket(sock, FIONBIO, &value)) {
-			closesocket(sock);
+		if (fcntl(sock, F_SETFL, fcntl(sock, F_GETFD, 0) | O_NONBLOCK) == -1) {
+			close(sock);
 			return false;
 		}
 
 		const int8_t nodelay = 1;
-		setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (const char*)&nodelay, sizeof(nodelay));
-
-		if (_completionPort != CreateIoCompletionPort((HANDLE)sock, _completionPort, sock, 0)) {
-			closesocket(sock);
-			return false;
-		}
+		setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (const char*)& nodelay, sizeof(nodelay));
 
 		sockaddr_in remote;
 		memset(&remote, 0, sizeof(remote));
 
-		memset(&connector->connect, 0, sizeof(connector->connect));
-		connector->connect.opt = IOCP_OPT_CONNECT;
-		connector->connect.sock = sock;
-		connector->connect.code = 0;
-		connector->connect.context = session;
-		connector->sendSize = sendSize;
-		connector->recvSize = recvSize;
-
 		remote.sin_family = AF_INET;
-		if (SOCKET_ERROR == bind(sock, (sockaddr *)&remote, sizeof(sockaddr_in)))
+		if (-1 == bind(sock, (sockaddr*)& remote, sizeof(sockaddr_in)))
 			return false;
 
 		remote.sin_port = htons(port);
 		if ((remote.sin_addr.s_addr = inet_addr(ip)) == INADDR_NONE)
 			return false;
 
-		BOOL res = g_connect(sock, (sockaddr *)&remote, sizeof(sockaddr_in), nullptr, 0, nullptr, (LPOVERLAPPED)&connector->connect);
-		int32_t errCode = WSAGetLastError();
-		if (!res && errCode != WSA_IO_PENDING)
+		EpollBase* connector = new EpollBase;
+		memset(connector, 0, sizeof(EpollBase));
+		connector->opt = EPOLL_OPT_CONNECT;
+		connector->sock = sock;
+		connector->code = 0;
+		connector->context = session;
+		connector->sendSize = sendSize;
+		connector->recvSize = recvSize;
+
+		if (!AddToWorker(connector)) {
+			close(sock);
+			delete connector;
+
 			return false;
+		}
 
 		return true;
 	}
@@ -212,9 +158,20 @@ namespace libnet {
 		delete this;
 	}
 
-	void NetEngine::ThreadProc() {
+	void NetEngine::ThreadProc(int32_t fd) {
 		while (!_terminate) {
-			IocpEvent * evt = GetQueueState(_completionPort);
+			epoll_event events[EPOLL_BATCH_SIZE];
+			s32 count = epoll_wait(fd, events, EPOLL_BATCH_SIZE, 0);
+			if (count < 1)
+				return;
+
+			for (int32 _t i = 0; i < count; ++i) {
+				EpollBase * evt = events[i].data.ptr;
+				evt->code = 
+				if ()
+			}
+
+			EpollBase* evt = GetQueueState(_completionPort);
 			if (evt) {
 				switch (evt->opt) {
 				case IOCP_OPT_ACCEPT: DealAccept((IocpAcceptor *)evt); break;
@@ -406,7 +363,7 @@ namespace libnet {
 		return true;
 	}
 
-	IocpEvent * NetEngine::GetQueueState(HANDLE completionPort) {
+	EpollBase* NetEngine::GetQueueState(int32_t fd) {
 		DWORD bytes = 0;
 		SOCKET socket = INVALID_SOCKET;
 		IocpEvent * evt = nullptr;
@@ -417,7 +374,7 @@ namespace libnet {
 		if (nullptr == evt)
 			return nullptr;
 
-		evt->code = WSAGetLastError();
+		evt->code = GetLastError();
 		evt->bytes = bytes;
 		if (!ret) {
 			if (WAIT_TIMEOUT == evt->code)
@@ -456,7 +413,7 @@ namespace libnet {
 			return;
 		}
 
-		session->OnConnected();
+		connection->OnConnected();
 
 		Add(connection);
 	}
@@ -464,12 +421,13 @@ namespace libnet {
 	void NetEngine::OnConnect(ITcpSession* session, SOCKET sock, int32_t sendSize, int32_t recvSize) {
 		sockaddr_in remote;
 		int32_t size = sizeof(sockaddr_in);
-		if (0 != getpeername(sock, (sockaddr*)&remote, &size)) {
-			session->OnConnectFailed();
-
-			closesocket(sock);
-			return;
-		}
+		//if (0 != getpeername(sock, (sockaddr*)&remote, &size)) {
+		//	printf("WSAGetLastError %d", WSAGetLastError());
+		//	session->OnConnectFailed();
+		//
+		//	closesocket(sock);
+		//	return;
+		//}
 
 		Connection* connection = new Connection(sock, this, sendSize, recvSize);
 		connection->Attach(session);
@@ -486,7 +444,7 @@ namespace libnet {
 			return;
 		}
 
-		session->OnConnected();
+		connection->OnConnected();
 
 		Add(connection);
 	}
@@ -496,20 +454,6 @@ namespace libnet {
 	}
 
 	INetEngine * CreateNetEngine() {
-		WSADATA wsaData;
-		if (0 != WSAStartup(MAKEWORD(2, 2), &wsaData))
-			return nullptr;
-
-		if (nullptr == (g_accept = GetAcceptExFunc()))
-			return nullptr;
-
-		if (nullptr == (g_connect = GetConnectExFunc()))
-			return nullptr;
-
-		HANDLE completionPort;
-		if (nullptr == (completionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0)))
-			return nullptr;
-
-		return new NetEngine(completionPort);
+		return new NetEngine();
 	}
 }

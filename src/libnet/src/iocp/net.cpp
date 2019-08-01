@@ -1,7 +1,6 @@
 #include "net.h"
 #include <mswsock.h> 
 #include <ws2tcpip.h>
-#include "util.h"
 #include <thread>
 #include <atomic>
 #include "Connection.h"
@@ -76,9 +75,15 @@ namespace libnet {
 
 	}
 
-	bool NetEngine::Listen(ITcpServer* server, const char * ip, const int32_t port, const int32_t sendSize, const int32_t recvSize) {
+	bool NetEngine::Listen(ITcpServer* server, const char * ip, const int32_t port, const int32_t sendSize, const int32_t recvSize, bool fast) {
 		SOCKET sock = INVALID_SOCKET;
 		if (INVALID_SOCKET == (sock = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED))) {
+			return false;
+		}
+
+		int32_t flag = 1;
+		if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&flag, sizeof(flag)) == -1) {
+			closesocket(sock);
 			return false;
 		}
 
@@ -115,6 +120,7 @@ namespace libnet {
 			acceptor->accept.context = server;
 			acceptor->sendSize = sendSize;
 			acceptor->recvSize = recvSize;
+			acceptor->fast = fast;
 
 			if (!DoAccept(acceptor)) {
 				closesocket(sock);
@@ -137,9 +143,7 @@ namespace libnet {
 		}
 	}
 
-	bool NetEngine::Connect(ITcpSession* session, const char * ip, const int32_t port, const int32_t sendSize, const int32_t recvSize) {
-		IocpConnector * connector = new IocpConnector;
-
+	bool NetEngine::Connect(ITcpSession* session, const char * ip, const int32_t port, const int32_t sendSize, const int32_t recvSize, bool fast) {
 		SOCKET sock = INVALID_SOCKET;
 		if (INVALID_SOCKET == (sock = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED))) {
 			LIBNET_ASSERT(false, "Connect error %d", ::WSAGetLastError());
@@ -163,14 +167,6 @@ namespace libnet {
 		sockaddr_in remote;
 		memset(&remote, 0, sizeof(remote));
 
-		memset(&connector->connect, 0, sizeof(connector->connect));
-		connector->connect.opt = IOCP_OPT_CONNECT;
-		connector->connect.sock = sock;
-		connector->connect.code = 0;
-		connector->connect.context = session;
-		connector->sendSize = sendSize;
-		connector->recvSize = recvSize;
-
 		remote.sin_family = AF_INET;
 		if (SOCKET_ERROR == bind(sock, (sockaddr *)&remote, sizeof(sockaddr_in)))
 			return false;
@@ -179,11 +175,27 @@ namespace libnet {
 		if ((remote.sin_addr.s_addr = inet_addr(ip)) == INADDR_NONE)
 			return false;
 
+		IocpConnector* connector = new IocpConnector;
+		memset(&connector->connect, 0, sizeof(connector->connect));
+		connector->connect.opt = IOCP_OPT_CONNECT;
+		connector->connect.sock = sock;
+		connector->connect.code = 0;
+		connector->connect.context = session;
+		connector->sendSize = sendSize;
+		connector->recvSize = recvSize;
+		SafeSprintf(connector->remoteIp, sizeof(connector->remoteIp), "%s", ip);
+		connector->remotePort = port;
+		connector->fast = fast;
+
 		DWORD len;
 		BOOL res = g_connect(sock, (sockaddr *)&remote, sizeof(sockaddr_in), nullptr, 0, &len, (LPOVERLAPPED)&connector->connect);
 		int32_t errCode = WSAGetLastError();
-		if (!res && errCode != WSA_IO_PENDING)
+		if (!res && errCode != WSA_IO_PENDING) {
+			closesocket(sock);
+			delete connector;
+
 			return false;
+		}
 
 		return true;
 	}
@@ -191,8 +203,8 @@ namespace libnet {
 	void NetEngine::Poll(int64_t frame) {
 		_eventQueue.SweepOnce([this](NetEvent* evt) {
 			switch (evt->evtType) {
-			case NET_ACCEPT: OnAccept((ITcpServer*)evt->context, evt->sock, evt->sendSize, evt->recvSize); break;
-			case NET_CONNECT_SUCCESS: OnConnect((ITcpSession*)evt->context, evt->sock, evt->sendSize, evt->recvSize); break;
+			case NET_ACCEPT: OnAccept((ITcpServer*)evt->context, evt->sock, evt->sendSize, evt->recvSize, evt->fast); break;
+			case NET_CONNECT_SUCCESS: OnConnect((ITcpSession*)evt->context, evt->sock, evt->sendSize, evt->recvSize, evt->fast, evt->remoteIp, evt->remotePort); break;
 			case NET_CONNECT_FAIL : OnConnectFail((ITcpSession*)evt->context); break;
 			case NET_SEND_DONE: ((Connection*)evt->context)->OnSendDone(); break;
 			case NET_SEND_FAIL: ((Connection*)evt->context)->OnSendFail(); break;
@@ -206,6 +218,9 @@ namespace libnet {
 		for (auto* conn : _connections) {
 			if (conn->NeedUpdateSend())
 				conn->UpdateSend();
+
+			if (conn->IsFastConnected())
+				conn->UpdateFast();
 		}
 	}
 
@@ -265,7 +280,7 @@ namespace libnet {
 
 			SOCKET sock = evt->sock;
 			if (sock != INVALID_SOCKET)
-				PushAccept(sock, (ITcpServer*)evt->accept.context, evt->sendSize, evt->recvSize);
+				PushAccept(sock, (ITcpServer*)evt->accept.context, evt->sendSize, evt->recvSize, evt->fast);
 
 			if (DoAccept(evt))
 				return;
@@ -280,7 +295,7 @@ namespace libnet {
 			const int8_t nodelay = 1;
 			setsockopt(evt->connect.sock, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof(nodelay));
 
-			PushConnectSuccess(evt->connect.sock, (ITcpSession*)evt->connect.context, evt->sendSize, evt->recvSize);
+			PushConnectSuccess(evt->connect.sock, (ITcpSession*)evt->connect.context, evt->sendSize, evt->recvSize, evt->fast, evt->remoteIp, evt->remotePort);
 		}
 		else {
 			closesocket(evt->connect.sock);
@@ -427,7 +442,7 @@ namespace libnet {
 		return evt;
 	}
 
-	void NetEngine::OnAccept(ITcpServer* server, SOCKET sock, int32_t sendSize, int32_t recvSize) {
+	void NetEngine::OnAccept(ITcpServer* server, SOCKET sock, int32_t sendSize, int32_t recvSize, bool fast) {
 		ITcpSession* session = server->MallocConnection();
 		if (!session) {
 			closesocket(sock);
@@ -457,27 +472,20 @@ namespace libnet {
 			return;
 		}
 
-		session->OnConnected();
+		if (fast)
+			connection->Fast();
+
+		connection->OnConnected(true);
 
 		Add(connection);
 	}
 
-	void NetEngine::OnConnect(ITcpSession* session, SOCKET sock, int32_t sendSize, int32_t recvSize) {
-		sockaddr_in remote;
-		int32_t size = sizeof(sockaddr_in);
-		//if (0 != getpeername(sock, (sockaddr*)&remote, &size)) {
-		//	printf("WSAGetLastError %d", WSAGetLastError());
-		//	session->OnConnectFailed();
-		//
-		//	closesocket(sock);
-		//	return;
-		//}
-
+	void NetEngine::OnConnect(ITcpSession* session, SOCKET sock, int32_t sendSize, int32_t recvSize, bool fast, const char* ip, int32_t port) {
 		Connection* connection = new Connection(sock, this, sendSize, recvSize);
 		connection->Attach(session);
 
-		inet_ntop(AF_INET, &remote.sin_addr, connection->_remoteIp, sizeof(connection->_remoteIp));
-		connection->SetRemotePort(ntohs(remote.sin_port));
+		connection->SetRemoteIp(ip);
+		connection->SetRemotePort(port);
 
 		if (!DoRecv(connection)) {
 			session->SetPipe(nullptr);
@@ -488,7 +496,10 @@ namespace libnet {
 			return;
 		}
 
-		session->OnConnected();
+		if (fast)
+			connection->Fast();
+
+		connection->OnConnected(false);
 
 		Add(connection);
 	}

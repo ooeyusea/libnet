@@ -9,6 +9,8 @@ INCLUDE_DIRECTORIES(
 )
 
 SET(NET_DETAIL
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/iocp/share_memory.h"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/iocp/share_memory.cpp"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/iocp/net.h"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/iocp/net.cpp"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/iocp/Connection.h"

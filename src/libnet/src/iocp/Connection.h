@@ -3,6 +3,7 @@
 #include "libnet.h"
 #include "net.h"
 #include "RingBuffer.h"
+#include "share_memory.h"
 
 namespace libnet {
 	class Connection : public IPipe {
@@ -19,7 +20,9 @@ namespace libnet {
 		virtual void Send(const char* context, const int32_t size);
 		virtual void Close();
 		virtual void Shutdown();
-		virtual IPreSendContext* PreAllocContext(int32_t size);
+
+		void Fast();
+		void OnConnected(bool accept);
 
 		inline SOCKET GetSocket() const { return _fd; }
 		inline IocpEvent& GetSendEvent() { return _sendEvent; }
@@ -33,11 +36,13 @@ namespace libnet {
 
 		inline bool IsClosing() const { return _closing; }
 		inline bool NeedUpdateSend() const { return !_closing && !_closed && !_sending && _sendBuffer.Size() > 0; }
+		inline bool IsFastConnected() const { return !_closing && !_closed && _fast && _fastConnected; }
 
 		inline void SetRemoteIp(const char * ip) const { SafeSprintf((char*)_remoteIp, sizeof(_remoteIp), "%s", ip); }
 		inline void SetRemotePort(int32_t port) { _remotePort = port; }
 
 		void UpdateSend();
+		void UpdateFast();
 		void OnSendDone();
 		void OnSendFail();
 		void OnRecv();
@@ -53,13 +58,21 @@ namespace libnet {
 		RingBuffer _sendBuffer;
 		RingBuffer _recvBuffer;
 
+		ShareMemory _shareMemorySendBuffer;
+		ShareMemory _shareMemoryRecvBuffer;
+
 		bool _closing = false;
 		bool _closed = false;
 		bool _recving = true;
 		bool _sending = false;
 
+		bool _fast = false;
+		bool _fastConnected = false;
+
 		IocpEvent _sendEvent;
 		IocpEvent _recvEvent;
+
+		int32_t _version = 0;
 	};
 }
 

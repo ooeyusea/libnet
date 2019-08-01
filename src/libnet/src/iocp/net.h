@@ -1,6 +1,7 @@
 #ifndef __NET_H__
 #define __NET_H__
 #include "libnet.h"
+#include "util.h"
 #include "lock_free_list.h"
 #include <unordered_set>
 #include <unordered_map>
@@ -29,12 +30,16 @@ namespace libnet {
 		IocpEvent connect;
 		int32_t sendSize;
 		int32_t recvSize;
+		bool fast;
+		char remoteIp[LIBNET_IP_SIZE];
+		int32_t remotePort;
 	};
 
 	struct IocpAcceptor {
 		IocpEvent accept;
 		int32_t sendSize;
 		int32_t recvSize;
+		bool fast;
 		SOCKET sock;
 		char buf[128];
 	};
@@ -55,6 +60,9 @@ namespace libnet {
 		SOCKET sock;
 		int32_t sendSize;
 		int32_t recvSize;
+		bool fast;
+		char remoteIp[LIBNET_IP_SIZE];
+		int32_t remotePort;
 
 		AtomicIntrusiveLinkedListHook<NetEvent> next;
 	};
@@ -65,9 +73,9 @@ namespace libnet {
 		NetEngine(HANDLE completionPort);
 		~NetEngine();
 
-		virtual bool Listen(ITcpServer* server, const char* ip, const int32_t port, const int32_t sendSize, const int32_t recvSize);
+		virtual bool Listen(ITcpServer* server, const char* ip, const int32_t port, const int32_t sendSize, const int32_t recvSize, bool fast);
 		virtual void Stop(ITcpServer* server);
-		virtual bool Connect(ITcpSession* session, const char* ip, const int32_t port, const int32_t sendSize, const int32_t recvSize);
+		virtual bool Connect(ITcpSession* session, const char* ip, const int32_t port, const int32_t sendSize, const int32_t recvSize, bool fast);
 
 		virtual void Poll(int64_t frame);
 		virtual void Release();
@@ -84,17 +92,20 @@ namespace libnet {
 		void DealSend(IocpEvent * evt);
 		void DealRecv(IocpEvent * evt);
 
-		void OnAccept(ITcpServer * server, SOCKET sock, int32_t sendSize, int32_t recvSize);
-		void OnConnect(ITcpSession* session, SOCKET sock, int32_t sendSize, int32_t recvSize);
+		void OnAccept(ITcpServer * server, SOCKET sock, int32_t sendSize, int32_t recvSize, bool fast);
+		void OnConnect(ITcpSession* session, SOCKET sock, int32_t sendSize, int32_t recvSize, bool fast, const char * ip, int32_t port);
 		void OnConnectFail(ITcpSession* session);
 
-		inline void PushAccept(SOCKET sock, ITcpServer* server, int32_t sendSize, int32_t recvSize) {
-			NetEvent * evt = new NetEvent{ NET_ACCEPT, server, sock, sendSize, recvSize };
+		inline void PushAccept(SOCKET sock, ITcpServer* server, int32_t sendSize, int32_t recvSize, bool fast) {
+			NetEvent * evt = new NetEvent{ NET_ACCEPT, server, sock, sendSize, recvSize, fast };
 			_eventQueue.InsertHead(evt);
 		}
 
-		inline void PushConnectSuccess(SOCKET sock, ITcpSession* session, int32_t sendSize, int32_t recvSize) {
-			NetEvent* evt = new NetEvent{ NET_CONNECT_SUCCESS, session, sock, sendSize, recvSize };
+		inline void PushConnectSuccess(SOCKET sock, ITcpSession* session, int32_t sendSize, int32_t recvSize, bool fast, const char * ip, int32_t port) {
+			NetEvent* evt = new NetEvent{ NET_CONNECT_SUCCESS, session, sock, sendSize, recvSize, fast };
+			SafeSprintf(evt->remoteIp, sizeof(evt->remoteIp), "%s", ip);
+			evt->remotePort = port;
+
 			_eventQueue.InsertHead(evt);
 		}
 
