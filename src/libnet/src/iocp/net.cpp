@@ -72,7 +72,6 @@ namespace libnet {
 
 		_terminate = true;
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
 	}
 
 	bool NetEngine::Listen(ITcpServer* server, const char * ip, const int32_t port, const int32_t sendSize, const int32_t recvSize, bool fast) {

@@ -2,18 +2,13 @@
 #include "util.h"
 
 namespace libnet {
-	Connection::Connection(SOCKET fd, NetEngine* engine, int32_t sendSize, int32_t recvSize)
+	Connection::Connection(int32_t fd, NetEngine* engine, int32_t sendSize, int32_t recvSize)
 		: _fd(fd), _engine(engine), _sendSize(sendSize), _recvSize(recvSize), _sendBuffer(sendSize), _recvBuffer(recvSize) {
-		memset(&_sendEvent, 0, sizeof(_sendEvent));
-		_sendEvent.context = this;
-		_sendEvent.sock = _fd;
-		_sendEvent.opt = IOCP_OPT_SEND;
-
-		memset(&_recvEvent, 0, sizeof(_recvEvent));
-		_recvEvent.context = this;
-		_recvEvent.sock = _fd;
-		_recvEvent.opt = IOCP_OPT_RECV;
-
+		memset(&_event, 0, sizeof(_event));
+		_event.context = this;
+		_event.sock = _fd;
+		_event.opt = EPOLL_OPT_IO;
+		_event.epollFd = 0;
 	}
 
 	void Connection::Send(const char* context, const int32_t size) {
@@ -26,13 +21,7 @@ namespace libnet {
 
 			if (!_sending) {
 				if (_sendBuffer.Size() > MIN_SEND_BUFF_SIZE) {
-					if (!_engine->DoSend(this)) {
-						LIBNET_ASSERT(_recving, "wtf");
-						Shutdown();
-						return;
-					}
-
-					_sending = true;
+					UpdateSend();
 				}
 			}
 		}
@@ -45,13 +34,7 @@ namespace libnet {
 		_closing = true;
 		if (!_sending) {
 			if (_sendBuffer.Size() > 0) {
-				if (!_engine->DoSend(this)) {
-					LIBNET_ASSERT(_recving, "wtf");
-					Shutdown();
-					return;
-				}
-
-				_sending = true;
+				UpdateSend();
 			}
 		}
 
@@ -62,19 +45,54 @@ namespace libnet {
 	void Connection::Shutdown() {
 		if (!_closed) {
 			_closed = true;
-			closesocket(_fd);
+			close(_fd);
 		}
 	}
 
-	IPreSendContext* Connection::PreAllocContext(int32_t size) {
-		return nullptr;
+	void Connection::Fast() {
+		if (strcmp(_remoteIp, "127.0.0.1") == 0)
+			_fast = true;
+	}
+
+	void Connection::OnConnected(bool accept) {
+		if (!_fast)
+			_session->OnConnected();
+		else if (!accept) {
+			//FastPipe fastPipe;
+			//
+			//SafeSprintf(fastPipe.recvName, sizeof(fastPipe.recvName), "P%d:%lld:recv%d", GetCurrentProcessId(), (int64_t)this, _version);
+			//fastPipe.recvSize = _recvSize;
+			//if (!_shareMemoryRecvBuffer.Open(fastPipe.recvName, _recvSize, true)) {
+			//	Shutdown();
+			//	return;
+			//}
+			//
+			//SafeSprintf(fastPipe.sendName, sizeof(fastPipe.sendName), "P%d:%lld:send%d", GetCurrentProcessId(), (int64_t)this, _version);
+			//fastPipe.sendSize = _sendSize;
+			//if (!_shareMemorySendBuffer.Open(fastPipe.sendName, _sendSize, true)) {
+			//	Shutdown();
+			//	return;
+			//}
+			//
+			//Send((const char*)& fastPipe, sizeof(fastPipe));
+
+			_fastConnected = true;
+			_session->OnConnected();
+		}
 	}
 
 	void Connection::UpdateSend() {
-		if (!_engine->DoSend(this)) {
+		int32_t left = _engine->DoSend(this);
+		if (left < 0) {
 			LIBNET_ASSERT(_recving, "wtf");
 			Shutdown();
-			return;
+		}
+		else if (left > 0) {
+			_sending = true;
+			if (!_engine->AddSend(&_event)) {
+				LIBNET_ASSERT(_recving, "wtf");
+				Shutdown();
+			}
 		}
 	}
 
@@ -82,11 +100,7 @@ namespace libnet {
 		_sending = false;
 
 		if (_closed) {
-			if (!_recving) {
-				_session->Release();
-				_engine->Remove(this);
-				delete this;
-			}
+			LIBNET_ASSERT(_recving, "wtf");
 			return;
 		}
 
@@ -94,51 +108,37 @@ namespace libnet {
 			LIBNET_ASSERT(_recving, "wtf");
 
 			if (_sendBuffer.Size() > 0) {
-				if (!_engine->DoSend(this)) {
-					Shutdown();
-					return;
-				}
-
-				_sending = true;
+				UpdateSend();
 			}
 			else
 				Shutdown();
 		}
 	}
 
-	void Connection::OnSendFail() {
-		_sending = false;
-		Shutdown();
-
-		if (!_recving) {
-			_session->Release();
-			_engine->Remove(this);
-			delete this;
-		}
-	}
-
 	void Connection::OnRecv() {
-		auto buffer = _recvBuffer.GetReadBuffer();
-		LIBNET_ASSERT(_session, "Connection::OnRecv session is empty");
+		if (_recvBuffer.Size() > 0) {
+			auto buffer = _recvBuffer.GetReadBuffer();
+			LIBNET_ASSERT(_session, "Connection::OnRecv session is empty");
 
-		int32_t len = -1;
-		if (_session)
-			len = _session->OnRecv(buffer);
+			int32_t len = -1;
+			if (_session)
+				len = _session->OnRecv(buffer);
 
-		if (len > 0)
-			_recvBuffer.Out(len);
-		else if (len < 0)
-			Shutdown();
+			if (len > 0)
+				_recvBuffer.Out(len);
+			else if (len < 0)
+				Shutdown();
+		}
 	}
 
-	void Connection::OnRecvFail() {
+	void Connection::OnFail() {
 		_recving = false;
+		_sending = false;
+
 		Shutdown();
 
-		if (!_sending) {
-			_session->Release();
-			_engine->Remove(this);
-			delete this;
-		}
+		_session->Release();
+		_engine->Remove(this);
+		delete this;
 	}
 }

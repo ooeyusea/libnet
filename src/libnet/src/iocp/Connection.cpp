@@ -201,17 +201,19 @@ namespace libnet {
 			}
 		}
 		else {
-			auto buffer = _recvBuffer.GetReadBuffer();
-			LIBNET_ASSERT(_session, "Connection::OnRecv session is empty");
+			if (_recvBuffer.Size() > 0) {
+				auto buffer = _recvBuffer.GetReadBuffer();
+				LIBNET_ASSERT(_session, "Connection::OnRecv session is empty");
 
-			int32_t len = -1;
-			if (_session)
-				len = _session->OnRecv(buffer);
+				int32_t len = -1;
+				if (_session)
+					len = _session->OnRecv(buffer);
 
-			if (len > 0)
-				_recvBuffer.Out(len);
-			else if (len < 0)
-				Shutdown();
+				if (len > 0)
+					_recvBuffer.Out(len);
+				else if (len < 0)
+					Shutdown();
+			}
 		}
 	}
 

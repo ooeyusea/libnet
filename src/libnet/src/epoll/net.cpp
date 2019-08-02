@@ -7,13 +7,17 @@
 #define NET_INIT_FRAME 1024
 #define MAX_NET_THREAD 4
 #define BACKLOG 128
+#define EPOLL_BATCH_SIZE 1024
 
 namespace libnet {
 	NetEngine::NetEngine() {
 		int32_t cpuCount = (int32_t)std::thread::hardware_concurrency();
 		for (int32_t i = 0; i < MAX_NET_THREAD && i < cpuCount * 2; ++i) {
-			std::thread([this]() {
-				ThreadProc();
+			int32_t fd = epoll_create(1);
+			_fds.emplace_back(fd);
+
+			std::thread([this, fd]() {
+				ThreadProc(fd);
 			}).detach();
 		}
 
@@ -25,9 +29,9 @@ namespace libnet {
 		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 	}
 
-	bool NetEngine::Listen(ITcpServer* server, const char * ip, const int32_t port, const int32_t sendSize, const int32_t recvSize) {
+	bool NetEngine::Listen(ITcpServer* server, const char * ip, const int32_t port, const int32_t sendSize, const int32_t recvSize, bool fast) {
 		int32_t sock = -1;
-		if (-1 == (sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0))) {
+		if (-1 == (sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP))) {
 			return false;
 		}
 
@@ -68,6 +72,7 @@ namespace libnet {
 		acceptor->context = server;
 		acceptor->sendSize = sendSize;
 		acceptor->recvSize = recvSize;
+		acceptor->fast = fast;
 
 		if (!AddToWorker(acceptor)) {
 			close(sock);
@@ -89,9 +94,9 @@ namespace libnet {
 		}
 	}
 
-	bool NetEngine::Connect(ITcpSession* session, const char * ip, const int32_t port, const int32_t sendSize, const int32_t recvSize) {
+	bool NetEngine::Connect(ITcpSession* session, const char * ip, const int32_t port, const int32_t sendSize, const int32_t recvSize, bool fast) {
 		int32_t sock = -1;
-		if (-1 == (sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0))) {
+		if (-1 == (sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP))) {
 			return false;
 		}
 
@@ -114,6 +119,12 @@ namespace libnet {
 		if ((remote.sin_addr.s_addr = inet_addr(ip)) == INADDR_NONE)
 			return false;
 
+		int32_t ret = connect(sock, (sockaddr*)& remote, sizeof(remote));
+		if (ret < 0 && errno != EINPROGRESS) {
+			close(sock);
+			return false;
+		}
+
 		EpollBase* connector = new EpollBase;
 		memset(connector, 0, sizeof(EpollBase));
 		connector->opt = EPOLL_OPT_CONNECT;
@@ -122,6 +133,9 @@ namespace libnet {
 		connector->context = session;
 		connector->sendSize = sendSize;
 		connector->recvSize = recvSize;
+		connector->fast = fast;
+		SafeSprintf(connector->remoteIp, sizeof(connector->remoteIp), "%s", ip);
+		connector->remotePort = port;
 
 		if (!AddToWorker(connector)) {
 			close(sock);
@@ -136,13 +150,12 @@ namespace libnet {
 	void NetEngine::Poll(int64_t frame) {
 		_eventQueue.SweepOnce([this](NetEvent* evt) {
 			switch (evt->evtType) {
-			case NET_ACCEPT: OnAccept((ITcpServer*)evt->context, evt->sock, evt->sendSize, evt->recvSize); break;
-			case NET_CONNECT_SUCCESS: OnConnect((ITcpSession*)evt->context, evt->sock, evt->sendSize, evt->recvSize); break;
+			case NET_ACCEPT: OnAccept((ITcpServer*)evt->context, evt->sock, evt->sendSize, evt->recvSize, evt->fast); break;
+			case NET_CONNECT_SUCCESS: OnConnect((ITcpSession*)evt->context, evt->sock, evt->sendSize, evt->recvSize, evt->fast, evt->remoteIp, evt->remotePort); break;
 			case NET_CONNECT_FAIL : OnConnectFail((ITcpSession*)evt->context); break;
 			case NET_SEND_DONE: ((Connection*)evt->context)->OnSendDone(); break;
-			case NET_SEND_FAIL: ((Connection*)evt->context)->OnSendFail(); break;
+			case NET_FAIL: ((Connection*)evt->context)->OnFail(); break;
 			case NET_RECV: ((Connection*)evt->context)->OnRecv(); break;
-			case NET_RECV_FAIL: ((Connection*)evt->context)->OnRecvFail(); break;
 			}
 
 			delete evt;
@@ -161,241 +174,159 @@ namespace libnet {
 	void NetEngine::ThreadProc(int32_t fd) {
 		while (!_terminate) {
 			epoll_event events[EPOLL_BATCH_SIZE];
-			s32 count = epoll_wait(fd, events, EPOLL_BATCH_SIZE, 0);
-			if (count < 1)
-				return;
-
-			for (int32 _t i = 0; i < count; ++i) {
-				EpollBase * evt = events[i].data.ptr;
-				evt->code = 
-				if ()
-			}
-
-			EpollBase* evt = GetQueueState(_completionPort);
-			if (evt) {
-				switch (evt->opt) {
-				case IOCP_OPT_ACCEPT: DealAccept((IocpAcceptor *)evt); break;
-				case IOCP_OPT_CONNECT: DealConnect((IocpConnector *)evt); break;
-				case IOCP_OPT_RECV: DealRecv(evt); break;
-				case IOCP_OPT_SEND: DealSend(evt); break;
-				}
-			}
-			else {
+			int32_t count = epoll_wait(fd, events, EPOLL_BATCH_SIZE, 0);
+			if (count < 1) {
 				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				continue;
+			}
+
+			for (int32_t i = 0; i < count; ++i) {
+				EpollBase * evt = (EpollBase * )events[i].data.ptr;
+				if (events[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP))
+					evt->code = -1;
+
+				switch (evt->opt) {
+				case EPOLL_OPT_ACCEPT: DealAccept((EpollBase*)evt); break;
+				case EPOLL_OPT_CONNECT: DealConnect((EpollBase*)evt); break;
+				case EPOLL_OPT_IO: DealIO(evt, events[i].events); break;
+				}
 			}
 		}
 	}
 
-	void NetEngine::DealAccept(IocpAcceptor * evt) {
-		if (evt->accept.code == ERROR_SUCCESS) {
-			BOOL res = setsockopt(evt->sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (const char *)&evt->accept.sock, sizeof(evt->accept.sock));
+	void NetEngine::DealAccept(EpollBase* evt) {
+		if (evt->code == 0) {
+			int32_t sock = -1;
+			int32_t count = 0;
+			sockaddr_in addr;
+			socklen_t len = sizeof(addr);
 
-			sockaddr_in remote;
-			int32_t size = sizeof(sockaddr_in);
-			if (res != 0 || 0 != getpeername(evt->sock, (sockaddr*)&remote, &size)) {
-				//OASSERT(false, "complete accept error %d", GetLastError());
-				closesocket(evt->sock);
-
-				evt->sock = INVALID_SOCKET;
-			}
-			else {
-				DWORD value = 0;
-				if (SOCKET_ERROR == ioctlsocket(evt->sock, FIONBIO, &value)) {
-					closesocket(evt->sock);
-
-					evt->sock = INVALID_SOCKET;
+			while (count++ < BACKLOG && (sock = accept(evt->sock, (sockaddr*)& addr, &len)) > 0) {
+				if (fcntl(sock, F_SETFL, fcntl(sock, F_GETFD, 0) | O_NONBLOCK) == -1) {
+					close(sock);
+					continue;
 				}
-				else {
-					HANDLE ret = CreateIoCompletionPort((HANDLE)evt->sock, _completionPort, evt->sock, 0);
-					if (_completionPort != ret) {
-						closesocket(evt->sock);
 
-						evt->sock = INVALID_SOCKET;
-					}
-					else {
-						const int8_t nodelay = 1;
-						setsockopt(evt->sock, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof(nodelay));
-					}
-				}
+				const int8_t nodelay = 1;
+				setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (const char*)& nodelay, sizeof(nodelay));
+
+				PushAccept(sock, (ITcpServer*)evt->context, evt->sendSize, evt->recvSize, evt->fast);
 			}
 
-			SOCKET sock = evt->sock;
-			if (sock != INVALID_SOCKET)
-				PushAccept(sock, (ITcpServer*)evt->accept.context, evt->sendSize, evt->recvSize);
-
-			if (DoAccept(evt))
+			if (errno == EAGAIN)
 				return;
 		}
 
-		closesocket(evt->sock);
+		close(evt->sock);
+		DelFromWorker(evt);
+
 		delete evt;
 	}
 
-	void NetEngine::DealConnect(IocpConnector * evt) {
-		if (evt->connect.code == ERROR_SUCCESS) {
+	void NetEngine::DealConnect(EpollBase* evt) {
+		if (evt->code == 0) {
 			const int8_t nodelay = 1;
-			setsockopt(evt->connect.sock, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof(nodelay));
+			setsockopt(evt->sock, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof(nodelay));
 
-			PushConnectSuccess(evt->connect.sock, (ITcpSession*)evt->connect.context, evt->sendSize, evt->recvSize);
+			PushConnectSuccess(evt->sock, (ITcpSession*)evt->context, evt->sendSize, evt->recvSize, evt->fast, evt->remoteIp, evt->remotePort);
 		}
 		else {
-			closesocket(evt->connect.sock);
-			PushConnectFail((ITcpSession*)evt->connect.context);
-			delete evt;
+			close(evt->sock);
+			
+			PushConnectFail((ITcpSession*)evt->context);
 		}
+
+		DelFromWorker(evt);
+		delete evt;
 	}
 
-	void NetEngine::DealSend(IocpEvent * evt) {
-		Connection * connection = (Connection*)evt->context;
-		if (evt->code == ERROR_SUCCESS) {
-			int32_t left = connection->Out(evt->bytes);
-			if (left > 0) {
-				if (left > MIN_SEND_BUFF_SIZE || connection->IsClosing()) {
-					if (!DoSend(connection)) {
-						closesocket(evt->sock);
-						PushSendFail(connection);
+	void NetEngine::DealIO(EpollBase* evt, int32_t flag) {
+		Connection* connection = (Connection*)evt->context;
+		if (evt->code != 0) {
+			DelFromWorker(evt);
+
+			PushFail(connection);
+		}
+		else {
+			if (flag & EPOLLIN) {
+				int32_t len = 0;
+
+				while (true) {
+					uint32_t size = 0;
+					char* recvBuf = connection->GetRecvBuffer(size);
+
+					if (recvBuf && size > 0) {
+						len = recv(evt->sock, recvBuf, size, 0);
+						if (len < 0 && errno == EAGAIN)
+							break;
 					}
-					return;
+					else
+						len = -1;
+
+					if (len <= 0) {
+						DelFromWorker(evt);
+						PushFail(connection);
+						return;
+					}
+
+					connection->In(len);
+					PushRecv(connection);
 				}
 			}
 
-			PushSendDone(connection);
-		}
-		else {
-			if (evt->code != ERROR_IO_PENDING) {
-				closesocket(evt->sock);
-				PushSendFail(connection);
-			}
-			else {
-				if (!DoSend(connection)) {
-					closesocket(evt->sock);
-					PushSendFail(connection);
+			if (flag & EPOLLOUT) {
+				int32_t left = DoSend(connection);
+				if (left < 0) {
+					DelFromWorker(evt);
+					PushFail(connection);
+				}
+				else if (left == 0) {
+					if (!RemoveSend(evt)) {
+						DelFromWorker(evt);
+						PushFail(connection);
+					}
+					else
+						PushSendDone(connection);
 				}
 			}
 		}
 	}
 
-	void NetEngine::DealRecv(IocpEvent * evt) {
-		Connection * connection = (Connection * )evt->context;
-		if (evt->code == ERROR_SUCCESS && evt->bytes > 0) {
-			connection->In(evt->bytes);
-			PushRecv(connection);
+	int32_t NetEngine::DoSend(Connection* connection) {
+		int32_t left = 0;
+		do {
+			uint32_t size = 0;
+			char* sendBuf = connection->GetSendBuffer(size);
 
-			if (!DoRecv(connection)) {
-				closesocket(evt->sock);
-				PushRecvFail(connection);
+			if (sendBuf && size > 0) {
+				int32_t len = send(connection->GetSocket(), sendBuf, size, 0);
+				if (len < 0) {
+					if (errno != EAGAIN)
+						return -1;
+				}
+
+				left = connection->Out(len);
 			}
-		}
-		else {
-			closesocket(evt->sock);
-			PushRecvFail(connection);
-		}
+			else
+				left = 0;
+
+		} while (left > 0);
+		return left;
 	}
 
-	bool NetEngine::DoSend(Connection* connection) {
-		uint32_t size = 0;
-		char * sendBuf = connection->GetSendBuffer(size);
-
-		IocpEvent& evtSend = connection->GetSendEvent();
-		evtSend.buf.buf = sendBuf;
-		evtSend.buf.len = size;
-		evtSend.code = 0;
-		evtSend.bytes = 0;
-		if (SOCKET_ERROR == WSASend(connection->GetSocket(), &evtSend.buf, 1, nullptr, 0, (LPWSAOVERLAPPED)&evtSend, nullptr)) {
-			evtSend.code = WSAGetLastError();
-			if (WSA_IO_PENDING != evtSend.code)
-				return false;
-		}
-		return true;
-	}
-
-	bool NetEngine::DoRecv(Connection* connection) {
-		uint32_t size = 0;
-		char* recvBuf = connection->GetRecvBuffer(size);
-
-		if (size <= 0)
-			return false;
-
-		IocpEvent& evtRecv = connection->GetRecvEvent();
-		DWORD flags = 0;
-		evtRecv.buf.buf = recvBuf;
-		evtRecv.buf.len = size;
-		evtRecv.code = 0;
-		evtRecv.bytes = 0;
-		if (SOCKET_ERROR == WSARecv(connection->GetSocket(), &evtRecv.buf, 1, nullptr, &flags, (LPWSAOVERLAPPED)&evtRecv, nullptr)) {
-			evtRecv.code = WSAGetLastError();
-			if (WSA_IO_PENDING != evtRecv.code)
-				return false;
-		}
-
-		return true;
-	}
-
-	bool NetEngine::DoAccept(IocpAcceptor * acceptor) {
-		acceptor->sock = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, nullptr, 0, WSA_FLAG_OVERLAPPED);
-		if (acceptor->sock == INVALID_SOCKET) {
-			LIBNET_ASSERT(false, "do accept failed %d", WSAGetLastError());
-			delete acceptor;
-			return false;
-		}
-
-		//hn_info("DoAccept {} {}", acceptor->accept.sock, acceptor->sock);
-
-		DWORD bytes = 0;
-		int32_t res = g_accept(acceptor->accept.sock,
-			acceptor->sock,
-			acceptor->buf,
-			0,
-			sizeof(sockaddr_in) + 16,
-			sizeof(sockaddr_in) + 16,
-			&bytes,
-			(LPOVERLAPPED)&acceptor->accept
-		);
-
-		int32_t errCode = WSAGetLastError();
-		if (!res && errCode != WSA_IO_PENDING) {
-			LIBNET_ASSERT(false, "do accept failed %d", errCode);
-			closesocket(acceptor->sock);
-			delete acceptor;
-			return false;
-		}
-
-		return true;
-	}
-
-	EpollBase* NetEngine::GetQueueState(int32_t fd) {
-		DWORD bytes = 0;
-		SOCKET socket = INVALID_SOCKET;
-		IocpEvent * evt = nullptr;
-
-		SetLastError(0);
-		BOOL ret = GetQueuedCompletionStatus(completionPort, &bytes, (PULONG_PTR)&socket, (LPOVERLAPPED *)&evt, 10);
-
-		if (nullptr == evt)
-			return nullptr;
-
-		evt->code = GetLastError();
-		evt->bytes = bytes;
-		if (!ret) {
-			if (WAIT_TIMEOUT == evt->code)
-				return nullptr;
-		}
-		return evt;
-	}
-
-	void NetEngine::OnAccept(ITcpServer* server, SOCKET sock, int32_t sendSize, int32_t recvSize) {
+	void NetEngine::OnAccept(ITcpServer* server, int32_t sock, int32_t sendSize, int32_t recvSize, bool fast) {
 		ITcpSession* session = server->MallocConnection();
 		if (!session) {
-			closesocket(sock);
+			close(sock);
 			return;
 		}
 
 		sockaddr_in remote;
-		int32_t size = sizeof(sockaddr_in);
+		socklen_t size = sizeof(sockaddr_in);
 		if (0 != getpeername(sock, (sockaddr*)&remote, &size)) {
 			session->Release();
 
-			closesocket(sock);
+			close(sock);
 			return;
 		}
 
@@ -405,52 +336,87 @@ namespace libnet {
 		inet_ntop(AF_INET, &remote.sin_addr, connection->_remoteIp, sizeof(connection->_remoteIp));
 		connection->SetRemotePort(ntohs(remote.sin_port));
 
-		if (!DoRecv(connection)) {
+		if (!AddToWorker(&connection->GetEvent())) {
 			session->Release();
 
-			closesocket(sock);
+			close(sock);
 			delete connection;
 			return;
 		}
 
-		connection->OnConnected();
+		if (fast)
+			connection->Fast();
 
+		connection->OnConnected(true);
 		Add(connection);
 	}
 
-	void NetEngine::OnConnect(ITcpSession* session, SOCKET sock, int32_t sendSize, int32_t recvSize) {
-		sockaddr_in remote;
-		int32_t size = sizeof(sockaddr_in);
-		//if (0 != getpeername(sock, (sockaddr*)&remote, &size)) {
-		//	printf("WSAGetLastError %d", WSAGetLastError());
-		//	session->OnConnectFailed();
-		//
-		//	closesocket(sock);
-		//	return;
-		//}
-
+	void NetEngine::OnConnect(ITcpSession* session, int32_t sock, int32_t sendSize, int32_t recvSize, bool fast, const char* ip, int32_t port) {
 		Connection* connection = new Connection(sock, this, sendSize, recvSize);
 		connection->Attach(session);
 
-		inet_ntop(AF_INET, &remote.sin_addr, connection->_remoteIp, sizeof(connection->_remoteIp));
-		connection->SetRemotePort(ntohs(remote.sin_port));
+		connection->SetRemoteIp(ip);
+		connection->SetRemotePort(port);
 
-		if (!DoRecv(connection)) {
+		if (!AddToWorker(&connection->GetEvent())) {
 			session->SetPipe(nullptr);
 			session->OnConnectFailed();
 
-			closesocket(sock);
+			close(sock);
 			delete connection;
 			return;
 		}
 
-		connection->OnConnected();
+		if (fast)
+			connection->Fast();
 
+		connection->OnConnected(false);
 		Add(connection);
 	}
 
 	void NetEngine::OnConnectFail(ITcpSession* session) {
 		session->OnConnectFailed();
+	}
+
+	bool NetEngine::AddToWorker(EpollBase* evt) {
+		evt->epollFd = SelectWorker();
+		if (evt->epollFd <= 0)
+			return false;
+
+		epoll_event ev;
+		ev.data.ptr = evt;
+		switch (evt->opt) {
+		case EPOLL_OPT_ACCEPT: ev.events = EPOLLIN; break;
+		case EPOLL_OPT_CONNECT: ev.events = EPOLLOUT | EPOLLET; break;
+		case EPOLL_OPT_IO: ev.events = EPOLLOUT | EPOLLET; break;
+		}
+		ev.events |= EPOLLERR | EPOLLHUP;
+
+		return epoll_ctl(evt->epollFd, EPOLL_CTL_ADD, evt->sock, &ev) == 0;
+	}
+
+	bool NetEngine::DelFromWorker(EpollBase* evt) {
+		return epoll_ctl(evt->epollFd, EPOLL_CTL_DEL, evt->sock, nullptr) == 0;
+	}
+
+	bool NetEngine::AddSend(EpollBase* evt) {
+		LIBNET_ASSERT(evt->opt == EPOLL_OPT_IO, "wtf");
+
+		epoll_event ev;
+		ev.data.ptr = evt;
+		ev.events = EPOLLIN | EPOLLOUT | EPOLLET | EPOLLERR | EPOLLHUP;
+
+		return epoll_ctl(evt->epollFd, EPOLL_CTL_MOD, evt->sock, &ev) == 0;
+	}
+
+	bool NetEngine::RemoveSend(EpollBase* evt) {
+		LIBNET_ASSERT(evt->opt == EPOLL_OPT_IO, "wtf");
+
+		epoll_event ev;
+		ev.data.ptr = evt;
+		ev.events = EPOLLIN | EPOLLET | EPOLLERR | EPOLLHUP;
+
+		return epoll_ctl(evt->epollFd, EPOLL_CTL_MOD, evt->sock, &ev) == 0;
 	}
 
 	INetEngine * CreateNetEngine() {

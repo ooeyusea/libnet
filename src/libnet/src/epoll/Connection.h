@@ -8,7 +8,7 @@ namespace libnet {
 	class Connection : public IPipe {
 		friend class NetEngine;
 	public:
-		Connection(SOCKET fd, NetEngine* engine, int32_t sendSize, int32_t recvSize);
+		Connection(int32_t fd, NetEngine* engine, int32_t sendSize, int32_t recvSize);
 		virtual ~Connection() {}
 
 		inline void Attach(ITcpSession* session) {
@@ -19,11 +19,12 @@ namespace libnet {
 		virtual void Send(const char* context, const int32_t size);
 		virtual void Close();
 		virtual void Shutdown();
-		virtual IPreSendContext* PreAllocContext(int32_t size);
 
-		inline SOCKET GetSocket() const { return _fd; }
-		inline IocpEvent& GetSendEvent() { return _sendEvent; }
-		inline IocpEvent& GetRecvEvent() { return _recvEvent; }
+		void Fast();
+		void OnConnected(bool accept);
+
+		inline int32_t GetSocket() const { return _fd; }
+		inline EpollBase& GetEvent() { return _event; }
 
 		inline void In(int32_t size) { _recvBuffer.In(size); }
 		inline int32_t Out(int32_t size) { _sendBuffer.Out(size); return _sendBuffer.Size(); }
@@ -39,12 +40,11 @@ namespace libnet {
 
 		void UpdateSend();
 		void OnSendDone();
-		void OnSendFail();
 		void OnRecv();
-		void OnRecvFail();
+		void OnFail();
 
 	private:
-		SOCKET _fd;
+		int32_t _fd;
 		NetEngine* _engine;
 		ITcpSession * _session = nullptr;
 		int32_t _sendSize;
@@ -58,8 +58,10 @@ namespace libnet {
 		bool _recving = true;
 		bool _sending = false;
 
-		IocpEvent _sendEvent;
-		IocpEvent _recvEvent;
+		EpollBase _event;
+
+		bool _fast = false;
+		bool _fastConnected = false;
 	};
 }
 

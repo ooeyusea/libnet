@@ -68,7 +68,6 @@ namespace libnet {
 				return false;
 
 			uint32_t realIn = _in & (_size - 1);
-			uint32_t realOut = _out & (_size - 1);
 			if (size <= _size - realIn)
 				memcpy(_buffer + realIn, content, size);
 			else {

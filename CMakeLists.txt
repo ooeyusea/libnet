@@ -7,7 +7,7 @@ PROJECT(libnet)
 
 IF(UNIX)
     SET(CMAKE_CXX_COMPILER "/usr/bin/g++")
-    SET(CMAKE_CXX_FLAGS "-Wall -std=c++17 -lpthread -lcurl -rdynamic -ldl -Dlinux -Wl,-rpath,./ -DUSE_FCONTEXT")
+    SET(CMAKE_CXX_FLAGS "-Wall -std=c++17 -rdynamic -Dlinux -Wl,-rpath,./ ")
     SET(CMAKE_CXX_FLAGS_DEBUG "-g -D_DEBUG -O0 -pg")
     SET(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g -DNDEBUG -O2")
 	SET(CMAKE_CXX_FLAGS_RELEASE "-DNDEBUG -O3")

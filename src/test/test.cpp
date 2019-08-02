@@ -73,7 +73,7 @@ public:
 					Close();
 				}
 				else if (data == "test\n") {
-					g_engine->Connect(new TestConnectSession, "127.0.0.1", 5500, 1024, 1024, true);
+					g_engine->Connect(new TestConnectSession, "127.0.0.1", 5500, 1024, 1024, false);
 				}
 				else {
 					printf("recv %s\n", data.c_str());
@@ -113,7 +113,7 @@ int main(int argc, char** argv) {
 	}
 
 	if (strcmp(argv[1], "server") == 0)
-		g_engine->Listen(new TestServer, "0.0.0.0", 5500, 1024, 1024, true);
+		g_engine->Listen(new TestServer, "0.0.0.0", 5500, 1024, 1024, false);
 	else
 		g_engine->Connect(new TestConnectSession, "127.0.0.1", 5500, 1024, 1024, true);
 
