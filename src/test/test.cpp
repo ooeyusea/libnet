@@ -88,7 +88,9 @@ public:
 
 	virtual void OnConnected() {}
 	virtual void OnConnectFailed() {}
-	virtual void OnDisconnect() {}
+	virtual void OnDisconnect() {
+		printf("disconnect\n");
+	}
 
 	virtual void Release() {
 		delete this;
@@ -113,7 +115,7 @@ int main(int argc, char** argv) {
 	}
 
 	if (strcmp(argv[1], "server") == 0)
-		g_engine->Listen(new TestServer, "0.0.0.0", 5500, 1024, 1024, true);
+		g_engine->Listen(new TestServer, "0.0.0.0", 5500, 1024, 1024, false);
 	else
 		g_engine->Connect(new TestConnectSession, "127.0.0.1", 5500, 1024, 1024, true);
 

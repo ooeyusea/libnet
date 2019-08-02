@@ -145,6 +145,9 @@ namespace libnet {
 
 		if (_closed) {
 			if (!_recving) {
+				_session->OnDisconnect();
+				_session->SetPipe(nullptr);
+
 				_session->Release();
 				_engine->Remove(this);
 				delete this;
@@ -173,6 +176,9 @@ namespace libnet {
 		Shutdown();
 
 		if (!_recving) {
+			_session->OnDisconnect();
+			_session->SetPipe(nullptr);
+
 			_session->Release();
 			_engine->Remove(this);
 			delete this;
@@ -222,6 +228,9 @@ namespace libnet {
 		Shutdown();
 
 		if (!_sending) {
+			_session->OnDisconnect();
+			_session->SetPipe(nullptr);
+
 			_session->Release();
 			_engine->Remove(this);
 			delete this;

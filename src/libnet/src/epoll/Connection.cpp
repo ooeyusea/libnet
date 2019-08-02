@@ -191,6 +191,9 @@ namespace libnet {
 
 		Shutdown();
 
+		_session->OnDisconnect();
+		_session->SetPipe(nullptr);
+
 		_session->Release();
 		_engine->Remove(this);
 		delete this;
