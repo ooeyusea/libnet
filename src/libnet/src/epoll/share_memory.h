@@ -2,6 +2,9 @@
 #define __SHARE_MEMORY_H__
 #include "libnet.h"
 #include "util.h"
+#include <sys/mman.h>
+
+#define LIBNET_SHARE_MEMORY_NAME_SIZE 64
 
 namespace libnet {
 	class ShareMemory {
@@ -55,7 +58,6 @@ namespace libnet {
 				return false;
 
 			uint32_t realIn = ((ShareMemoryHeader*)_buff)->in & (((ShareMemoryHeader*)_buff)->size - 1);
-			uint32_t realOut = ((ShareMemoryHeader*)_buff)->out & (((ShareMemoryHeader*)_buff)->size - 1);
 			if (size <= ((ShareMemoryHeader*)_buff)->size - realIn)
 				memcpy(_buff + sizeof(ShareMemoryHeader) + realIn, content, size);
 			else {
@@ -129,7 +131,8 @@ namespace libnet {
 		bool Open(const char* name, int32_t size, bool owner);
 
 	private:
-		HANDLE _mapFile = NULL;
+		int32_t _mapFile = -1;
+		char _name[64];
 		char* _buff = nullptr;
 		int32_t _size = 0;
 	};

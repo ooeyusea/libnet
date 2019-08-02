@@ -164,6 +164,9 @@ namespace libnet {
 		for (auto* conn : _connections) {
 			if (conn->NeedUpdateSend())
 				conn->UpdateSend();
+
+			if (conn->IsFastConnected())
+				conn->UpdateFast();
 		}
 	}
 

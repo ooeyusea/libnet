@@ -23,5 +23,6 @@ IF(UNIX)
 TARGET_LINK_LIBRARIES(test
 	"${PROJECT_SOURCE_DIR}/bin/libnet.a"
 	-lpthread
+	-lrt
 )
 ENDIF(UNIX)

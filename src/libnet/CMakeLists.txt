@@ -26,6 +26,8 @@ INCLUDE_DIRECTORIES(
 )
 
 SET(NET_DETAIL
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/epoll/share_memory.h"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/epoll/share_memory.cpp"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/epoll/net.h"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/epoll/net.cpp"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/epoll/Connection.h"

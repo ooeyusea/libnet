@@ -1,12 +1,18 @@
 #include "share_memory.h"
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <fcntl.h>
 
 namespace libnet {
 	ShareMemory::~ShareMemory() {
 		if (_buff)
-			UnmapViewOfFile(_buff);
+			munmap(_buff, _size);
 
-		if (_mapFile)
-			CloseHandle(_mapFile);
+		if (_mapFile) {
+			close(_mapFile);
+
+			shm_unlink(_name);
+		}
 	}
 
 	bool ShareMemory::Open(const char* name, int32_t size, bool owner) {
@@ -14,18 +20,16 @@ namespace libnet {
 			size = RoundupPowOfTwo(size);
 
 		_size = size + sizeof(ShareMemoryHeader);
-		if (owner) {
-			_mapFile = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, _size, name);
-			if (_mapFile == NULL)
-				return false;
-		}
-		else {
-			_mapFile = OpenFileMapping(FILE_MAP_ALL_ACCESS, NULL, name);
-			if (_mapFile == NULL)
-				return false;
-		}
+		SafeSprintf(_name, sizeof(_name), "%s", name);
 
-		_buff = (char*)MapViewOfFile(_mapFile, FILE_MAP_ALL_ACCESS, 0, 0, _size);
+		_mapFile = shm_open(name, O_RDWR | O_CREAT, 0777);
+		if (_mapFile < 0)
+			return false;
+
+		if (ftruncate(_mapFile, _size) < 0)
+			return false;
+
+		_buff = (char*)mmap(NULL, _size, PROT_READ | PROT_WRITE, MAP_SHARED, _mapFile, SEEK_SET);
 		if (!_buff)
 			return false;
 
