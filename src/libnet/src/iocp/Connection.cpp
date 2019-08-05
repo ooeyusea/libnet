@@ -122,6 +122,8 @@ namespace libnet {
 			Shutdown();
 			return;
 		}
+
+		_sending = true;
 	}
 
 	void Connection::UpdateFast() {
