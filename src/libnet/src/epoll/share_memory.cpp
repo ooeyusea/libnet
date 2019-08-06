@@ -42,4 +42,11 @@ namespace libnet {
 
 		return true;
 	}
+
+	bool ShareMemory::Plus(const char* name, int32_t size) {
+		if (Size() > 0)
+			CopyToTemp();
+
+		return Open(name, size, false);
+	}
 }

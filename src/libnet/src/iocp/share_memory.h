@@ -43,7 +43,8 @@ namespace libnet {
 				memcpy(_buff + sizeof(ShareMemoryHeader) + realIn, content, ((ShareMemoryHeader*)_buff)->size - realIn);
 				memcpy(_buff + sizeof(ShareMemoryHeader), (const char*)content + ((ShareMemoryHeader*)_buff)->size - realIn, size - (((ShareMemoryHeader*)_buff)->size - realIn));
 			}
-			((ShareMemoryHeader*)_buff)->in += size;
+
+			InterlockedExchange(&((ShareMemoryHeader*)_buff)->in, ((ShareMemoryHeader*)_buff)->in + size);
 			return true;
 		}
 
@@ -61,11 +62,11 @@ namespace libnet {
 					_tempSize = 0;
 
 					if (_tempOffset > 0)
-						((ShareMemoryHeader*)_buff)->out += _tempOffset;
+						InterlockedExchange(&((ShareMemoryHeader*)_buff)->out, ((ShareMemoryHeader*)_buff)->out + _tempOffset);
 				}
 			}
 			else
-				((ShareMemoryHeader*)_buff)->out += size;
+				InterlockedExchange(&((ShareMemoryHeader*)_buff)->out, ((ShareMemoryHeader*)_buff)->out + size);
 		}
 
 		inline NetBuffer GetReadBuffer() {

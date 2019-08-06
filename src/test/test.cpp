@@ -121,9 +121,9 @@ int main(int argc, char** argv) {
 	}
 
 	if (strcmp(argv[1], "server") == 0)
-		g_engine->Listen(new TestServer, "0.0.0.0", 5500, 1024, 1024, false);
+		g_engine->Listen(new TestServer, "0.0.0.0", 5500, 1024, 1024, true);
 	else
-		g_engine->Connect(new TestConnectSession, "127.0.0.1", 5500, 1024, 1024, false);
+		g_engine->Connect(new TestConnectSession, "127.0.0.1", 5500, 1024, 1024, true);
 
 	while (!g_terminate) {
 		g_engine->Poll(1);

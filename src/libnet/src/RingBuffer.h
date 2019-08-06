@@ -44,7 +44,11 @@ namespace libnet {
 		inline uint32_t Size() const { return _in - _out; }
 
 		inline void In(const uint32_t size) {
-			_in += size;
+#ifdef WIN32
+			InterlockedExchange(&_in, _in + size);
+#else
+			__atomic_exchange_n(&_in, _in + size, __ATOMIC_RELEASE);
+#endif
 		}
 
 		char* Write(uint32_t& size) {
@@ -74,7 +78,12 @@ namespace libnet {
 				memcpy(_buffer + realIn, content, _size - realIn);
 				memcpy(_buffer, (const char*)content + _size - realIn, size - (_size - realIn));
 			}
-			_in += size;
+
+#ifdef WIN32
+			InterlockedExchange(&_in, _in + size);
+#else
+			__atomic_exchange_n(&_in, _in + size, __ATOMIC_RELEASE);
+#endif
 			return true;
 		}
 
@@ -123,7 +132,11 @@ namespace libnet {
 
 		inline void Out(const uint32_t size) {
 			LIBNET_ASSERT(_in - _out >= size, "wtf");
-			_out += size;
+#ifdef WIN32
+			InterlockedExchange(&_out, _out + size);
+#else
+			__atomic_exchange_n(&_out, _out + size, __ATOMIC_RELEASE);
+#endif
 		}
 
 		inline void Realloc(uint32_t size) {

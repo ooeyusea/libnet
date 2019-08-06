@@ -202,9 +202,17 @@ namespace libnet {
 							buffer.Read(sizeof(op), fastPipe);
 							_recvBuffer.Out(sizeof(FastPipe) + sizeof(op));
 
-							if (!_shareMemoryRecvBuffer.Open(fastPipe.sendName, fastPipe.sendSize, false)) {
-								Shutdown();
-								return;
+							if (!_fastConnected) {
+								if (!_shareMemoryRecvBuffer.Open(fastPipe.sendName, fastPipe.sendSize, false)) {
+									Shutdown();
+									return;
+								}
+							}
+							else {
+								if (!_shareMemoryRecvBuffer.Plus(fastPipe.sendName, fastPipe.sendSize)) {
+									Shutdown();
+									return;
+								}
 							}
 
 							if (!_sendBuffer.WriteBlock(&FAST_PIPE_CREATE_OK, (int32_t)sizeof(FAST_PIPE_CREATE_OK))) {
