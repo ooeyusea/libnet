@@ -153,7 +153,7 @@ namespace libnet {
 			free(_buffer);
 			_buffer = buffer;
 			_out = 0;
-			_in = 0;
+			_in = usedSize;
 			_size = size;
 		}
 

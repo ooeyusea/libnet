@@ -90,7 +90,15 @@ namespace libnet {
 	void Connection::AdjustSendBuffSize(const int32_t size) {
 		if (size > _sendSize) {
 			_adjustSend = size;
-			DoAdjustFastSendBuffSize();
+			
+			if (!_fast) {
+				if (!_sending) {
+					_sendBuffer.Realloc(_adjustSend);
+					_adjustSend = 0;
+				}
+			}
+			else
+				DoAdjustFastSendBuffSize();
 		}
 	}
 

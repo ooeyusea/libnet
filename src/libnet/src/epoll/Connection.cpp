@@ -1,16 +1,21 @@
 #include "Connection.h"
 #include "util.h"
 
+#define LIBNET_FAST_PIPE_NAME_SIZE 64
+#define FAST_SEND_SIZE 1024
+#define FAST_RECV_SIZE 1024
+
 namespace libnet {
+	static const int32_t FAST_PIPE_CREATE = 0;
+	static const int32_t FAST_PIPE_CREATE_OK = 1;
+
 	struct FastPipe {
-		char recvName[LIBNET_SHARE_MEMORY_NAME_SIZE];
-		int32_t recvSize;
-		char sendName[LIBNET_SHARE_MEMORY_NAME_SIZE];
+		char sendName[LIBNET_FAST_PIPE_NAME_SIZE];
 		int32_t sendSize;
 	};
 
-	Connection::Connection(int32_t fd, NetEngine* engine, int32_t sendSize, int32_t recvSize)
-		: _fd(fd), _engine(engine), _sendSize(sendSize), _recvSize(recvSize), _sendBuffer(sendSize), _recvBuffer(recvSize) {
+	Connection::Connection(int32_t fd, NetEngine* engine, int32_t sendSize, int32_t recvSize, bool fast)
+		: _fd(fd), _engine(engine), _sendSize(sendSize), _recvSize(recvSize), _sendBuffer(fast ? FAST_SEND_SIZE : sendSize), _recvBuffer(fast ? FAST_RECV_SIZE : recvSize), _fast(fast) {
 		memset(&_event, 0, sizeof(_event));
 		_event.context = this;
 		_event.sock = _fd;
@@ -65,35 +70,64 @@ namespace libnet {
 		}
 	}
 
-	void Connection::Fast() {
-		if (strcmp(_remoteIp, "127.0.0.1") == 0)
-			_fast = true;
+	void Connection::AdjustSendBuffSize(const int32_t size) {
+		if (size > _sendSize) {
+			_adjustSend = size;
+
+			if (!_fast) {
+				if (!_sending) {
+					_sendBuffer.Realloc(_adjustSend);
+					_adjustSend = 0;
+				}
+			}
+			else
+				DoAdjustFastSendBuffSize();
+		}
 	}
 
-	void Connection::OnConnected(bool accept) {
-		if (!_fast)
-			_session->OnConnected();
-		else if (!accept) {
+	void Connection::AdjustRecvBuffSize(const int32_t size) {
+		if (size > _recvSize)
+			_adjustRecv = size;
+	}
+
+	void Connection::DoAdjustFastSendBuffSize() {
+		if (_fastSendConnected && _fast) {
+			++_version;
+			_sendSize = _adjustSend;
+
 			FastPipe fastPipe;
-			
-			SafeSprintf(fastPipe.recvName, sizeof(fastPipe.recvName), "P%d:%lld:recv%d", getpid(), (int64_t)this, _version);
-			fastPipe.recvSize = _recvSize;
-			if (!_shareMemoryRecvBuffer.Open(fastPipe.recvName, _recvSize, true)) {
-				Shutdown();
-				return;
-			}
-			
 			SafeSprintf(fastPipe.sendName, sizeof(fastPipe.sendName), "P%d:%lld:send%d", getpid(), (int64_t)this, _version);
 			fastPipe.sendSize = _sendSize;
 			if (!_shareMemorySendBuffer.Open(fastPipe.sendName, _sendSize, true)) {
 				Shutdown();
 				return;
 			}
-			
-			Send((const char*)& fastPipe, sizeof(fastPipe));
 
-			_fastConnected = true;
+			if (!_sendBuffer.WriteBlock(&FAST_PIPE_CREATE, (int32_t)sizeof(FAST_PIPE_CREATE)) || !_sendBuffer.WriteBlock(&fastPipe, (int32_t)sizeof(fastPipe))) {
+				LIBNET_ASSERT(_recving, "wtf");
+				Shutdown();
+				return;
+			}
+
+			_fastSendConnected = false;
+			_adjustSend = 0;
+		}
+	}
+
+	void Connection::OnConnected(bool accept) {
+		if (!_fast)
 			_session->OnConnected();
+		else {
+			FastPipe fastPipe;
+			SafeSprintf(fastPipe.sendName, sizeof(fastPipe.sendName), "P%d:%lld:send%d", getpid(), (int64_t)this, _version);
+			fastPipe.sendSize = _sendSize;
+			if (!_shareMemorySendBuffer.Open(fastPipe.sendName, _sendSize, true)) {
+				Shutdown();
+				return;
+			}
+
+			Send((const char*)& FAST_PIPE_CREATE, (int32_t)sizeof(FAST_PIPE_CREATE));
+			Send((const char*)&fastPipe, sizeof(fastPipe));
 		}
 	}
 
@@ -136,6 +170,13 @@ namespace libnet {
 			return;
 		}
 
+		if (!_fast) {
+			if (_adjustSend > 0) {
+				_sendBuffer.Realloc(_adjustSend);
+				_adjustSend = 0;
+			}
+		}
+
 		if (_closing) {
 			LIBNET_ASSERT(_recving, "wtf");
 
@@ -149,23 +190,48 @@ namespace libnet {
 
 	void Connection::OnRecv() {
 		if (_fast) {
-			if (_recvBuffer.Size() >= sizeof(FastPipe)) {
-				FastPipe fastPipe;
-				_recvBuffer.GetReadBuffer().Read(0, fastPipe);
-				_recvBuffer.Out(sizeof(FastPipe));
+			while (_recvBuffer.Size() > 0) {
+				if (_recvBuffer.Size() >= sizeof(int32_t)) {
+					int32_t op = 0;
+					NetBuffer buffer = _recvBuffer.GetReadBuffer();
+					buffer.Read(0, op);
 
-				if (!_shareMemoryRecvBuffer.Open(fastPipe.sendName, fastPipe.sendSize, false)) {
-					Shutdown();
-					return;
+					if (op == FAST_PIPE_CREATE) {
+						if (_recvBuffer.Size() >= sizeof(FastPipe) + sizeof(op)) {
+							FastPipe fastPipe;
+							buffer.Read(sizeof(op), fastPipe);
+							_recvBuffer.Out(sizeof(FastPipe) + sizeof(op));
+
+							if (!_shareMemoryRecvBuffer.Open(fastPipe.sendName, fastPipe.sendSize, false)) {
+								Shutdown();
+								return;
+							}
+
+							if (!_sendBuffer.WriteBlock(&FAST_PIPE_CREATE_OK, (int32_t)sizeof(FAST_PIPE_CREATE_OK))) {
+								LIBNET_ASSERT(_recving, "wtf");
+								Shutdown();
+								return;
+							}
+
+							if (!_fastConnected) {
+								_fastConnected = true;
+								_session->OnConnected();
+							}
+						}
+						else
+							break;
+					}
+					else if (op == FAST_PIPE_CREATE_OK) {
+						_fastSendConnected = true;
+						_recvBuffer.Out(sizeof(op));
+
+						if (_adjustSend)
+							DoAdjustFastSendBuffSize();
+					}
+
 				}
-
-				if (!_shareMemorySendBuffer.Open(fastPipe.recvName, fastPipe.recvSize, false)) {
-					Shutdown();
-					return;
-				}
-
-				_fastConnected = true;
-				_session->OnConnected();
+				else
+					break;
 			}
 		}
 		else {
@@ -183,6 +249,36 @@ namespace libnet {
 					Shutdown();
 			}
 		}
+	}
+
+	void Connection::OnRecvDone() {
+		if (_adjustRecv > 0) {
+			_recvBuffer.Realloc(_adjustRecv);
+			_adjustRecv = 0;
+		}
+
+		int32_t len = 0;
+		while (true) {
+			uint32_t size = 0;
+			char* recvBuf = GetRecvBuffer(size);
+
+			if (recvBuf && size > 0) {
+				len = recv(_fd, recvBuf, size, 0);
+				if (len < 0 && errno == EAGAIN)
+					break;
+			}
+			else
+				len = -1;
+
+			if (len <= 0) {
+				Shutdown();
+				return;
+			}
+
+			In(len);
+		}
+
+		OnRecv();
 	}
 
 	void Connection::OnFail() {

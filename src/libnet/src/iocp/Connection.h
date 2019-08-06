@@ -28,7 +28,6 @@ namespace libnet {
 
 		inline bool IsAdjustRecvBuff() const { return !_fast && _adjustRecv > 0; }
 
-		void Fast();
 		void OnConnected(bool accept);
 
 		inline SOCKET GetSocket() const { return _fd; }

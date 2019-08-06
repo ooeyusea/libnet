@@ -8,6 +8,7 @@
 #define MAX_NET_THREAD 4
 #define BACKLOG 128
 #define EPOLL_BATCH_SIZE 1024
+#define LOCAL_IP "127.0.0.1"
 
 namespace libnet {
 	NetEngine::NetEngine() {
@@ -156,6 +157,7 @@ namespace libnet {
 			case NET_SEND_DONE: ((Connection*)evt->context)->OnSendDone(); break;
 			case NET_FAIL: ((Connection*)evt->context)->OnFail(); break;
 			case NET_RECV: ((Connection*)evt->context)->OnRecv(); break;
+			case NET_RECV_DONE: ((Connection*)evt->context)->OnRecvDone(); break;
 			}
 
 			delete evt;
@@ -252,28 +254,33 @@ namespace libnet {
 		}
 		else {
 			if (flag & EPOLLIN) {
-				int32_t len = 0;
+				if (connection->IsAdjustRecvBuff()) {
+					PushRecvDone(connection);
+				}
+				else {
+					int32_t len = 0;
 
-				while (true) {
-					uint32_t size = 0;
-					char* recvBuf = connection->GetRecvBuffer(size);
+					while (true) {
+						uint32_t size = 0;
+						char* recvBuf = connection->GetRecvBuffer(size);
 
-					if (recvBuf && size > 0) {
-						len = recv(evt->sock, recvBuf, size, 0);
-						if (len < 0 && errno == EAGAIN)
-							break;
+						if (recvBuf && size > 0) {
+							len = recv(evt->sock, recvBuf, size, 0);
+							if (len < 0 && errno == EAGAIN)
+								break;
+						}
+						else
+							len = -1;
+
+						if (len <= 0) {
+							DelFromWorker(evt);
+							PushFail(connection);
+							return;
+						}
+
+						connection->In(len);
+						PushRecv(connection);
 					}
-					else
-						len = -1;
-
-					if (len <= 0) {
-						DelFromWorker(evt);
-						PushFail(connection);
-						return;
-					}
-
-					connection->In(len);
-					PushRecv(connection);
 				}
 			}
 
@@ -333,10 +340,13 @@ namespace libnet {
 			return;
 		}
 
-		Connection * connection = new Connection(sock, this, sendSize, recvSize);
+		char remoteIp[LIBNET_IP_SIZE];
+		inet_ntop(AF_INET, &remote.sin_addr, remoteIp, sizeof(remoteIp));
+
+		Connection * connection = new Connection(sock, this, sendSize, recvSize, fast ? strcmp(remoteIp, LOCAL_IP) == 0 : false);
 		connection->Attach(session);
 
-		inet_ntop(AF_INET, &remote.sin_addr, connection->_remoteIp, sizeof(connection->_remoteIp));
+		connection->SetRemoteIp(remoteIp);
 		connection->SetRemotePort(ntohs(remote.sin_port));
 
 		if (!AddToWorker(&connection->GetEvent())) {
@@ -347,15 +357,12 @@ namespace libnet {
 			return;
 		}
 
-		if (fast)
-			connection->Fast();
-
 		connection->OnConnected(true);
 		Add(connection);
 	}
 
 	void NetEngine::OnConnect(ITcpSession* session, int32_t sock, int32_t sendSize, int32_t recvSize, bool fast, const char* ip, int32_t port) {
-		Connection* connection = new Connection(sock, this, sendSize, recvSize);
+		Connection* connection = new Connection(sock, this, sendSize, recvSize, fast ? strcmp(ip, LOCAL_IP) == 0 : false);
 		connection->Attach(session);
 
 		connection->SetRemoteIp(ip);
@@ -369,9 +376,6 @@ namespace libnet {
 			delete connection;
 			return;
 		}
-
-		if (fast)
-			connection->Fast();
 
 		connection->OnConnected(false);
 		Add(connection);

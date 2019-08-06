@@ -9,7 +9,7 @@ namespace libnet {
 	class Connection : public IPipe {
 		friend class NetEngine;
 	public:
-		Connection(int32_t fd, NetEngine* engine, int32_t sendSize, int32_t recvSize);
+		Connection(int32_t fd, NetEngine* engine, int32_t sendSize, int32_t recvSize, bool fast);
 		virtual ~Connection() {}
 
 		inline void Attach(ITcpSession* session) {
@@ -20,6 +20,13 @@ namespace libnet {
 		virtual void Send(const char* context, const int32_t size);
 		virtual void Close();
 		virtual void Shutdown();
+
+		virtual void AdjustSendBuffSize(const int32_t size);
+		virtual void AdjustRecvBuffSize(const int32_t size);
+
+		void DoAdjustFastSendBuffSize();
+
+		inline bool IsAdjustRecvBuff() const { return !_fast && _adjustRecv > 0; }
 
 		void OnConnected(bool accept);
 
@@ -43,6 +50,7 @@ namespace libnet {
 		void UpdateFast();
 		void OnSendDone();
 		void OnRecv();
+		void OnRecvDone();
 		void OnFail();
 
 	private:
@@ -58,6 +66,9 @@ namespace libnet {
 		ShareMemory _shareMemorySendBuffer;
 		ShareMemory _shareMemoryRecvBuffer;
 
+		int32_t _adjustSend = 0;
+		int32_t _adjustRecv = 0;
+
 		bool _closing = false;
 		bool _closed = false;
 		bool _recving = true;
@@ -65,8 +76,9 @@ namespace libnet {
 
 		EpollBase _event;
 
-		bool _fast = false;
+		bool _fast;
 		bool _fastConnected = false;
+		bool _fastSendConnected = false;
 
 		int32_t _version = 0;
 	};
