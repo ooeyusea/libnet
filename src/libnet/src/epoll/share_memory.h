@@ -63,8 +63,10 @@ namespace libnet {
 					_tempOffset -= _tempSize;
 					_tempSize = 0;
 
-					if (_tempOffset > 0)
+					if (_tempOffset > 0) {
 						__atomic_exchange_n(&((ShareMemoryHeader*)_buff)->out, ((ShareMemoryHeader*)_buff)->out + _tempOffset, __ATOMIC_RELEASE);
+						_tempOffset = 0;
+					}
 				}
 			}
 			else

@@ -61,8 +61,10 @@ namespace libnet {
 					_tempOffset -= _tempSize;
 					_tempSize = 0;
 
-					if (_tempOffset > 0)
+					if (_tempOffset > 0) {
 						InterlockedExchange(&((ShareMemoryHeader*)_buff)->out, ((ShareMemoryHeader*)_buff)->out + _tempOffset);
+						_tempOffset = 0;
+					}
 				}
 			}
 			else
