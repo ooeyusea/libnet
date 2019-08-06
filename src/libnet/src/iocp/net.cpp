@@ -8,6 +8,7 @@
 #define NET_INIT_FRAME 1024
 #define MAX_NET_THREAD 4
 #define BACKLOG 128
+#define LOCAL_IP "127.0.0.1"
 
 LPFN_ACCEPTEX GetAcceptExFunc() {
 	GUID acceptExGuild = WSAID_ACCEPTEX;
@@ -208,6 +209,7 @@ namespace libnet {
 			case NET_SEND_DONE: ((Connection*)evt->context)->OnSendDone(); break;
 			case NET_SEND_FAIL: ((Connection*)evt->context)->OnSendFail(); break;
 			case NET_RECV: ((Connection*)evt->context)->OnRecv(); break;
+			case NET_RECV_DONE: ((Connection*)evt->context)->OnRecvDone(); break;
 			case NET_RECV_FAIL: ((Connection*)evt->context)->OnRecvFail(); break;
 			}
 
@@ -339,9 +341,14 @@ namespace libnet {
 			connection->In(evt->bytes);
 			PushRecv(connection);
 
-			if (!DoRecv(connection)) {
-				closesocket(evt->sock);
-				PushRecvFail(connection);
+			if (connection->IsAdjustRecvBuff()) {
+				PushRecvDone(connection);
+			}
+			else {
+				if (!DoRecv(connection)) {
+					closesocket(evt->sock);
+					PushRecvFail(connection);
+				}
 			}
 		}
 		else {
@@ -457,10 +464,13 @@ namespace libnet {
 			return;
 		}
 
-		Connection * connection = new Connection(sock, this, sendSize, recvSize);
+		char remoteIp[LIBNET_IP_SIZE];
+		inet_ntop(AF_INET, &remote.sin_addr, remoteIp, sizeof(remoteIp));
+
+		Connection * connection = new Connection(sock, this, sendSize, recvSize, fast ? strcmp(remoteIp, LOCAL_IP) == 0 : false);
 		connection->Attach(session);
 
-		inet_ntop(AF_INET, &remote.sin_addr, connection->_remoteIp, sizeof(connection->_remoteIp));
+		connection->SetRemoteIp(remoteIp);
 		connection->SetRemotePort(ntohs(remote.sin_port));
 
 		if (!DoRecv(connection)) {
@@ -471,16 +481,13 @@ namespace libnet {
 			return;
 		}
 
-		if (fast)
-			connection->Fast();
-
 		connection->OnConnected(true);
 
 		Add(connection);
 	}
 
 	void NetEngine::OnConnect(ITcpSession* session, SOCKET sock, int32_t sendSize, int32_t recvSize, bool fast, const char* ip, int32_t port) {
-		Connection* connection = new Connection(sock, this, sendSize, recvSize);
+		Connection* connection = new Connection(sock, this, sendSize, recvSize, fast ? strcmp(ip, LOCAL_IP) == 0 : false);
 		connection->Attach(session);
 
 		connection->SetRemoteIp(ip);
@@ -494,9 +501,6 @@ namespace libnet {
 			delete connection;
 			return;
 		}
-
-		if (fast)
-			connection->Fast();
 
 		connection->OnConnected(false);
 

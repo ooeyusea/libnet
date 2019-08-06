@@ -10,6 +10,16 @@ namespace libnet {
 	}
 
 	bool ShareMemory::Open(const char* name, int32_t size, bool owner) {
+		if (_buff) {
+			UnmapViewOfFile(_buff);
+			_buff = nullptr;
+		}
+
+		if (_mapFile) {
+			CloseHandle(_mapFile);
+			_mapFile = NULL;
+		}
+
 		if (size & (size - 1))
 			size = RoundupPowOfTwo(size);
 
@@ -37,5 +47,12 @@ namespace libnet {
 		}
 
 		return true;
+	}
+
+	bool ShareMemory::Plus(const char* name, int32_t size) {
+		if (Size() > 0)
+			CopyToTemp();
+
+		return Open(name, size, false);
 	}
 }

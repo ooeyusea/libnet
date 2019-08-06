@@ -103,6 +103,9 @@ namespace libnet {
 		virtual void Close() = 0;
 		virtual void Shutdown() = 0;
 
+		virtual void AdjustSendBuffSize(const int32_t size) = 0;
+		virtual void AdjustRecvBuffSize(const int32_t size) = 0;
+
 		inline const char* GetRemoteIp() const { return _remoteIp; }
 		inline int32_t GetRemotePort() { return _remotePort; }
 
@@ -140,6 +143,16 @@ namespace libnet {
 		inline void Shutdown() {
 			if (_pipe)
 				_pipe->Shutdown();
+		}
+
+		inline void AdjustSendBuffSize(const int32_t size) {
+			if (_pipe)
+				_pipe->AdjustSendBuffSize(size);
+		}
+
+		inline void AdjustRecvBuffSize(const int32_t size) {
+			if (_pipe)
+				_pipe->AdjustRecvBuffSize(size);
 		}
 
 	protected:

@@ -18,7 +18,7 @@ class TestConnectSession : public ITcpSession {
 		if (_data.back() == '\n') {
 			printf("count %d : %s", _count, _data.c_str());
 
-			Send(_data.c_str(), _data.size());
+			Send(_data.c_str(), (int32_t)_data.size());
 			_data.clear();
 
 			if (++_count > 20)
@@ -32,9 +32,11 @@ class TestConnectSession : public ITcpSession {
 		std::string data;
 		for (int32_t i = 0; i < 137; ++i)
 			data += ('a' + (rand() % 26));
-		data += '\n';
 	
-		Send(data.c_str(), data.size());
+		Send(data.c_str(), (int32_t)data.size());
+		AdjustSendBuffSize(2048);
+		data = "\n";
+		Send(data.c_str(), (int32_t)data.size());
 	}
 
 	virtual void OnConnectFailed() {}
@@ -78,6 +80,7 @@ public:
 				else {
 					printf("recv %s\n", data.c_str());
 					Send(data.c_str(), (int32_t)data.size());
+					AdjustSendBuffSize(2048);
 				}
 				return offset;
 			}
@@ -86,7 +89,9 @@ public:
 		return 0;
 	}
 
-	virtual void OnConnected() {}
+	virtual void OnConnected() {
+
+	}
 	virtual void OnConnectFailed() {}
 	virtual void OnDisconnect() {
 		printf("disconnect\n");
@@ -107,7 +112,7 @@ struct TestServer : public ITcpServer {
 };
 
 int main(int argc, char** argv) {
-	srand(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+	srand((uint32_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 
 	g_engine = CreateNetEngine();
 	if (!g_engine) {
@@ -115,7 +120,7 @@ int main(int argc, char** argv) {
 	}
 
 	if (strcmp(argv[1], "server") == 0)
-		g_engine->Listen(new TestServer, "0.0.0.0", 5500, 1024, 1024, false);
+		g_engine->Listen(new TestServer, "0.0.0.0", 5500, 1024, 1024, true);
 	else
 		g_engine->Connect(new TestConnectSession, "127.0.0.1", 5500, 1024, 1024, true);
 

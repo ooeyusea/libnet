@@ -126,6 +126,37 @@ namespace libnet {
 			_out += size;
 		}
 
+		inline void Realloc(uint32_t size) {
+			if (size & (size - 1))
+				size = RoundupPowOfTwo(size);
+
+			uint32_t usedSize = _in - _out;
+			if (usedSize > size)
+				return;
+
+			char* buffer = (char*)malloc(size);
+			if (!buffer)
+				return;
+
+			if (usedSize > 0) {
+				uint32_t realIn = _in & (_size - 1);
+				uint32_t realOut = _out & (_size - 1);
+
+				if (realIn > realOut)
+					memcpy(buffer, _buffer + realOut, usedSize);
+				else {
+					memcpy(buffer, _buffer + realOut, _size - realOut);
+					memcpy(buffer + _size - realOut, _buffer, realIn);
+				}
+			}
+
+			free(_buffer);
+			_buffer = buffer;
+			_out = 0;
+			_in = 0;
+			_size = size;
+		}
+
 		inline NetBuffer GetReadBuffer() {
 			uint32_t realIn = _in & (_size - 1);
 			uint32_t realOut = _out & (_size - 1);

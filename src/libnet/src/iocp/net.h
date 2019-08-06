@@ -51,6 +51,7 @@ namespace libnet {
 		NET_SEND_DONE,
 		NET_SEND_FAIL,
 		NET_RECV,
+		NET_RECV_DONE,
 		NET_RECV_FAIL,
 	};
 
@@ -126,6 +127,11 @@ namespace libnet {
 
 		inline void PushRecv(Connection* connection) {
 			NetEvent* evt = new NetEvent{ NET_RECV, connection };
+			_eventQueue.InsertHead(evt);
+		}
+
+		inline void PushRecvDone(Connection* connection) {
+			NetEvent* evt = new NetEvent{ NET_RECV_DONE, connection };
 			_eventQueue.InsertHead(evt);
 		}
 

@@ -21,7 +21,6 @@ namespace libnet {
 		virtual void Close();
 		virtual void Shutdown();
 
-		void Fast();
 		void OnConnected(bool accept);
 
 		inline int32_t GetSocket() const { return _fd; }
