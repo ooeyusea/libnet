@@ -62,7 +62,7 @@ namespace libnet {
 	class Connection;
 	class NetEngine : public INetEngine {
 	public:
-		NetEngine();
+		NetEngine(int32_t threadCount);
 		~NetEngine();
 
 		virtual bool Listen(ITcpServer* server, const char* ip, const int32_t port, const int32_t sendSize, const int32_t recvSize, bool fast);

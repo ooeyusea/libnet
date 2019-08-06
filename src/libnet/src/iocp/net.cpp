@@ -56,9 +56,8 @@ LPFN_ACCEPTEX g_accept = nullptr;
 LPFN_CONNECTEX g_connect = nullptr;
 
 namespace libnet {
-	NetEngine::NetEngine(HANDLE completionPort) : _completionPort(completionPort) {
-		int32_t cpuCount = (int32_t)std::thread::hardware_concurrency();
-		for (int32_t i = 0; i < MAX_NET_THREAD && i < cpuCount * 2; ++i) {
+	NetEngine::NetEngine(HANDLE completionPort, int32_t threadCount) : _completionPort(completionPort) {
+		for (int32_t i = 0; i < threadCount; ++i) {
 			std::thread([this]() {
 				ThreadProc();
 			}).detach();
@@ -511,7 +510,7 @@ namespace libnet {
 		session->OnConnectFailed();
 	}
 
-	INetEngine * CreateNetEngine() {
+	INetEngine * CreateNetEngine(int32_t threadCount) {
 		WSADATA wsaData;
 		if (0 != WSAStartup(MAKEWORD(2, 2), &wsaData))
 			return nullptr;
@@ -526,6 +525,6 @@ namespace libnet {
 		if (nullptr == (completionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0)))
 			return nullptr;
 
-		return new NetEngine(completionPort);
+		return new NetEngine(completionPort, threadCount);
 	}
 }

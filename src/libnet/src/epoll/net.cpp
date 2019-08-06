@@ -11,9 +11,8 @@
 #define LOCAL_IP "127.0.0.1"
 
 namespace libnet {
-	NetEngine::NetEngine() {
-		int32_t cpuCount = (int32_t)std::thread::hardware_concurrency();
-		for (int32_t i = 0; i < MAX_NET_THREAD && i < cpuCount * 2; ++i) {
+	NetEngine::NetEngine(int32_t threadCount) {
+		for (int32_t i = 0; i < threadCount; ++i) {
 			int32_t fd = epoll_create(1);
 			_fds.emplace_back(fd);
 
@@ -426,7 +425,7 @@ namespace libnet {
 		return epoll_ctl(evt->epollFd, EPOLL_CTL_MOD, evt->sock, &ev) == 0;
 	}
 
-	INetEngine * CreateNetEngine() {
-		return new NetEngine();
+	INetEngine * CreateNetEngine(int32_t threadCount) {
+		return new NetEngine(threadCount);
 	}
 }

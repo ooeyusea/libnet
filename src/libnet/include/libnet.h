@@ -179,7 +179,7 @@ namespace libnet {
 		virtual void Release() = 0;
 	};
 
-	INetEngine* CreateNetEngine();
+	INetEngine* CreateNetEngine(int32_t threadCount);
 }
 
 #endif //__LIBNET_H__

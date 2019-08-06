@@ -115,7 +115,7 @@ int main(int argc, char** argv) {
 	srand((uint32_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 	printf("sizeof(int64_t) %d\n", sizeof(int64_t));
 
-	g_engine = CreateNetEngine();
+	g_engine = CreateNetEngine(4);
 	if (!g_engine) {
 		return -1;
 	}
