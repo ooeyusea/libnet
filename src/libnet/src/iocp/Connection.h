@@ -85,6 +85,9 @@ namespace libnet {
 		IocpEvent _recvEvent;
 
 		int32_t _version = 0;
+
+		int64_t _id = 0;
+		static int64_t s_nextId;
 	};
 }
 

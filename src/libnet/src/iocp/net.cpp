@@ -89,7 +89,7 @@ namespace libnet {
 		sockaddr_in addr;
 		addr.sin_family = AF_INET;
 		addr.sin_port = htons(port);
-		if ((addr.sin_addr.s_addr = inet_addr(ip)) == INADDR_NONE) {
+		if (inet_pton(AF_INET, ip, &addr.sin_addr.s_addr) < 0) {
 			closesocket(sock);
 			return false;
 		}
@@ -171,7 +171,7 @@ namespace libnet {
 			return false;
 
 		remote.sin_port = htons(port);
-		if ((remote.sin_addr.s_addr = inet_addr(ip)) == INADDR_NONE)
+		if (inet_pton(AF_INET, ip, &remote.sin_addr.s_addr) < 0)
 			return false;
 
 		IocpConnector* connector = new IocpConnector;

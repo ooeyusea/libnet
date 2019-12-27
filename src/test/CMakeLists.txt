@@ -1,6 +1,5 @@
 INCLUDE_DIRECTORIES(
     "${PROJECT_SOURCE_DIR}/src/libnet/include"
-	"${PROJECT_SOURCE_DIR}/src/libhttp/include"
 )
 
 SET(SRC
@@ -16,15 +15,13 @@ ADD_EXECUTABLE(test
 IF(WIN32)
 TARGET_LINK_LIBRARIES(test
 	"${PROJECT_SOURCE_DIR}/bin/$<CONFIGURATION>/libnet.lib"
-	"${PROJECT_SOURCE_DIR}/bin/$<CONFIGURATION>/libhttp.lib"
 )
-ADD_DEPENDENCIES(test libnet libhttp)
+ADD_DEPENDENCIES(test libnet)
 ENDIF(WIN32)
 
 IF(UNIX)
 TARGET_LINK_LIBRARIES(test
 	"${PROJECT_SOURCE_DIR}/bin/libnet.a"
-	"${PROJECT_SOURCE_DIR}/bin/libhttp.a"
 	-lpthread
 	-lrt
 )

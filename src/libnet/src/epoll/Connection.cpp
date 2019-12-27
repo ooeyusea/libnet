@@ -14,6 +14,8 @@ namespace libnet {
 		int32_t sendSize;
 	};
 
+	int64_t Connection::s_nextId = 0;
+
 	Connection::Connection(int32_t fd, NetEngine* engine, int32_t sendSize, int32_t recvSize, bool fast)
 		: _fd(fd), _engine(engine), _sendSize(sendSize), _recvSize(recvSize), _sendBuffer(fast ? FAST_SEND_SIZE : sendSize), _recvBuffer(fast ? FAST_RECV_SIZE : recvSize), _fast(fast) {
 		memset(&_event, 0, sizeof(_event));
@@ -21,6 +23,11 @@ namespace libnet {
 		_event.sock = _fd;
 		_event.opt = EPOLL_OPT_IO;
 		_event.epollFd = 0;
+
+		++s_nextId;
+		if (s_nextId <= 0)
+			s_nextId = 1;
+		_id = s_nextId;
 	}
 
 	void Connection::Send(const char* context, const int32_t size) {
@@ -96,7 +103,7 @@ namespace libnet {
 			_sendSize = _adjustSend;
 
 			FastPipe fastPipe;
-			SafeSprintf(fastPipe.sendName, sizeof(fastPipe.sendName), "P%d:%lld:send%d", getpid(), (int64_t)this, _version);
+			SafeSprintf(fastPipe.sendName, sizeof(fastPipe.sendName), "P%d:%lld:send%d", getpid(), _id, _version);
 			fastPipe.sendSize = _sendSize;
 			if (!_shareMemorySendBuffer.Open(fastPipe.sendName, _sendSize, true)) {
 				Shutdown();
@@ -119,7 +126,7 @@ namespace libnet {
 			_session->OnConnected();
 		else {
 			FastPipe fastPipe;
-			SafeSprintf(fastPipe.sendName, sizeof(fastPipe.sendName), "P%d:%lld:send%d", getpid(), (int64_t)this, _version);
+			SafeSprintf(fastPipe.sendName, sizeof(fastPipe.sendName), "P%d:%lld:send%d", getpid(), _id, _version);
 			fastPipe.sendSize = _sendSize;
 			if (!_shareMemorySendBuffer.Open(fastPipe.sendName, _sendSize, true)) {
 				Shutdown();

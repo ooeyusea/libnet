@@ -39,10 +39,12 @@ ENDIF(UNIX)
 
 SET(SRC
     "${CMAKE_CURRENT_SOURCE_DIR}/include/libnet.h"
+	"${CMAKE_CURRENT_SOURCE_DIR}/include/libhttp.h"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/util.h"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/RingBuffer.h"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/lock_free_list.h"
 	"${CMAKE_CURRENT_SOURCE_DIR}/src/libnet.cpp"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/libhttp.cpp"
 )
 
 SOURCE_GROUP(iocp FILES ${NET_DETAIL})

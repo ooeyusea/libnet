@@ -144,7 +144,7 @@ namespace libnet {
 		inline void Remove(Connection* conn) { _connections.erase(conn); }
 
 	private:
-		bool _terminate;
+		bool _terminate = false;
 
 		HANDLE _completionPort;
 		AtomicIntrusiveLinkedList<NetEvent, &NetEvent::next> _eventQueue;

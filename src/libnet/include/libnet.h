@@ -25,6 +25,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #endif
+#include <string>
 
 #define LIBNET_IP_SIZE 64
 
@@ -36,6 +37,71 @@ namespace libnet {
 			_size = size;
 			_buffPlus = buffPlus;
 			_sizePlus = sizePlus;
+		}
+
+		inline int32_t Find(int32_t offset, char c) const {
+			for (int32_t i = offset; i < _size + _sizePlus; ++i) {
+				char check = (i >= _size ? _buffPlus[i - _size] : _buff[i]);
+				if (check == c)
+					return i;
+			}
+			return -1;
+		}
+
+		inline int32_t Find(int32_t offset, int32_t end, char c) const {
+			for (int32_t i = offset; i < _size + _sizePlus && i < end; ++i) {
+				char check = (i >= _size ? _buffPlus[i - _size] : _buff[i]);
+				if (check == c)
+					return i;
+			}
+			return -1;
+		}
+
+		inline int32_t FindIf(int32_t offset, int32_t end, bool (*f)(char c)) const {
+			for (int32_t i = offset; i < _size + _sizePlus && i < end; ++i) {
+				char check = (i >= _size ? _buffPlus[i - _size] : _buff[i]);
+				if (f(check))
+					return i;
+			}
+			return -1;
+		}
+
+		inline int32_t RFindIf(int32_t offset, int32_t end, bool (*f)(char c)) const {
+			int32_t realEnd = end < (_size + _sizePlus) ? end : _size + _sizePlus;
+			for (int32_t i = realEnd - 1; i >= offset; --i) {
+				char check = (i >= _size ? _buffPlus[i - _size] : _buff[i]);
+				if (f(check))
+					return i;
+			}
+			return -1;
+		}
+
+		inline int32_t Find(int32_t offset, const char* str) const {
+			int32_t len = (int32_t)strlen(str);
+			for (int32_t i = offset; i < _size + _sizePlus; ++i) {
+				int32_t j = 0;
+				for (; j < len; ++j) {
+					char check = (i + j >= _size ? _buffPlus[(i + j) - _size] : _buff[i + j]);
+					if (check != str[j])
+						break;
+				}
+
+				if (j == len)
+					return i;
+			}
+			return -1;
+		}
+
+		inline std::string ReadBlock(int32_t offset, int32_t end) const {
+			if (offset >= _size)
+				return std::string(_buffPlus + (offset - _size), end - offset);
+			else if (end > _size) {
+				std::string ret(_buff + offset, _size - offset);
+				ret.append(_buffPlus, end - _size);
+				return ret;
+			}
+			
+			return std::string(_buff + offset, end - offset);
 		}
 
 		template <typename T>
