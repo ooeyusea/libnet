@@ -103,7 +103,7 @@ namespace libnet {
 			_sendSize = _adjustSend;
 
 			FastPipe fastPipe;
-			SafeSprintf(fastPipe.sendName, sizeof(fastPipe.sendName), "P%d:%lld:send%d", getpid(), _id, _version);
+			SafeSprintf(fastPipe.sendName, sizeof(fastPipe.sendName), "FTCPP%d:%lld:send%d", getpid(), _id, _version);
 			fastPipe.sendSize = _sendSize;
 			if (!_shareMemorySendBuffer.Open(fastPipe.sendName, _sendSize, true)) {
 				Shutdown();
@@ -126,7 +126,7 @@ namespace libnet {
 			_session->OnConnected();
 		else {
 			FastPipe fastPipe;
-			SafeSprintf(fastPipe.sendName, sizeof(fastPipe.sendName), "P%d:%lld:send%d", getpid(), _id, _version);
+			SafeSprintf(fastPipe.sendName, sizeof(fastPipe.sendName), "FTCPP%d:%lld:send%d", getpid(), _id, _version);
 			fastPipe.sendSize = _sendSize;
 			if (!_shareMemorySendBuffer.Open(fastPipe.sendName, _sendSize, true)) {
 				Shutdown();
